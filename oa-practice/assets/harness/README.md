@@ -10,7 +10,9 @@
 
 ## Output
 
-<!-- Format, and any tie-breaking or precision rule. -->
+<!-- Format, and any tie-breaking or precision rule. Note here if any sample in
+     tests/samples/ was worked out by hand rather than taken from the statement —
+     those are the ones to distrust first if the judge and you disagree. -->
 
 ## Constraints
 

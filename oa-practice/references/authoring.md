@@ -195,7 +195,10 @@ algorithm:
   fails the pass and names the input — one of the two is wrong, and which one is not
   yet known.
 - `oa.py selfcheck` checks both against the statement's samples. That is the only
-  ground truth the harness did not generate itself, so neither reference skips it.
+  ground truth the harness did not generate itself, so neither reference skips it —
+  and it is why a sample's expected output is never produced by running a reference,
+  however convenient that is when the statement did not supply one. SKILL.md step 4
+  has what to do instead.
 
 Never ship a fast reference alone — see SKILL.md step 5 for why.
 

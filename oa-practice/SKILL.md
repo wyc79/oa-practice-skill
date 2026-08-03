@@ -49,7 +49,7 @@ Everything downstream depends on the exact input format, so resolve it before wr
 anything. Most of it is inferable from the samples — match the sample input text
 token by token against the prose. Ask the user only about what genuinely isn't there:
 
-- **No sample I/O at all** → ask for at least one example, or offer to invent samples and flag that they're unverified.
+- **No sample I/O at all** → ask for at least one example, or write one yourself (step 4 says how, and it matters how) and flag that it is unverified.
 - **Function-signature style** (LeetCode-ish: "implement `int maxProfit(vector<int>& prices)`") → keep the same shape: `main()` reads stdin and calls their function, so the file still runs standalone but the signature is what they'd paste into the real OA.
 - **Multiple test cases per input file** (`T` on the first line) → common in 笔试; check the samples for it.
 - **Ambiguous output formatting** (float precision, trailing spaces, ordering) → default to `"checker": "token"` (whitespace-insensitive), `"float"` with an eps, or a custom checker. Say which you picked.
@@ -73,10 +73,34 @@ build is worse than a Python one. macOS has `clang++` only after `xcode-select
 `g++`/`clang++` on PATH, scaffold `--lang python` and say why.
 
 Time limit: 3000 ms unless the statement says otherwise; tighten to 1000–2000 ms when
-the point of the problem is that the naive approach is too slow. Those numbers assume
-C++. If you fell back to Python, re-derive them — the interpreter adds ~30–50 ms of
-startup and a large constant factor, so a limit that cleanly separates O(n log n) from
-O(n²) in C++ can end up failing both.
+the point of the problem is that the naive approach is too slow.
+
+What a limit buys, since every other number in this file follows from it: plan C++ at
+**10⁸ operations per second**. That is deliberately pessimistic — it is roughly what
+cache-missing, pointer-chasing code manages, while straight-line arithmetic runs 3–5x
+that and a loop the compiler can vectorise runs far more. Planning with the floor is
+what makes the figure safe. **CPython runs ~10⁷ loop iterations per second**, spanning
+about 7·10⁶ when each iteration touches a dict to 3·10⁷ for a bare comparison over a
+list — call it 30x slower than C++ for comparable work. Read the statement's constraint
+line against that and the intended complexity usually falls out on its own:
+
+| n up to | fits in ~1 s of C++ |
+|---|---|
+| 10⁸ | O(n) |
+| 10⁶ | O(n log n) |
+| 5·10³ | O(n²) |
+| 300 | O(n³) |
+| 22 | O(2ⁿ) |
+| 11 | O(n!) |
+
+That table settles two things at once: the limit to pass to `--tl`, and the complexity
+target that goes in the README. When the constraints make the intended solution obvious
+— `n <= 2*10^5` wants O(n log n) — a limit generous enough to also let O(n²) through has
+quietly changed the problem into an easier one.
+
+If you fell back to Python, re-derive the limit rather than scaling it: 30–50 ms is
+interpreter startup before a line of the solution runs, and at 30x the constant factor a
+limit that cleanly separates O(n log n) from O(n²) in C++ can end up failing both.
 
 The scaffold also drops in a README skeleton to fill in as you go, and `.oa/gen.py` +
 `.oa/ref/reference.py` as a **worked example for a different problem**, each carrying
@@ -95,8 +119,22 @@ and stub shapes.
 
 ### 4. Samples
 
-Copy them verbatim from the statement into `tests/samples/sampleN.in` / `.out`.
-Verbatim matters: a "corrected" sample hides a misreading of the statement.
+Two cases, and which one you are in decides everything about how you fill in the `.out`.
+
+**The statement gives the output** → copy it verbatim into `tests/samples/sampleN.in` /
+`.out`. Verbatim matters: a "corrected" sample hides a misreading of the statement.
+
+**It doesn't** — no examples at all, or an answer that lives in a diagram or in prose —
+→ work one out by hand from the statement and note in the README that the sample is
+yours rather than the statement's. That is good enough.
+
+What it must never be is a reference's output. `selfcheck` is the only place either
+reference meets ground truth the harness did not generate itself, so a sample filled in
+by running the reference collapses that into the reference agreeing with itself: it
+passes every time, prints `consistent`, and proves nothing — while the whole workspace
+may be solving a subtly different problem than the one on the page. Working the answer
+out by hand keeps the check real, because reading a statement and writing an algorithm
+are two different acts and the point is to find out when they disagree.
 
 ### 5. `.oa/ref/reference.py` — the brute force
 
@@ -105,8 +143,14 @@ Rewrite the scaffold's body and delete its `TEMPLATE = True` line.
 Write the dumbest correct thing: exponential enumeration, O(n³) DP, simulation.
 Its only job is to disagree with the user when the user is wrong, so clarity beats
 speed. `oa.py answers` gives it `ref_time_limit_ms` per test (default 120 s) and
-caches every answer, so slow is genuinely fine — at that budget an O(n²) Python brute
-force reaches n ≈ 3000 and anything cheaper reaches the real limits.
+caches every answer, so slow is genuinely fine.
+
+Whether it is *fast enough* is arithmetic, not a rule of thumb. Count the iterations
+your brute force performs at the largest generated case and divide by the CPython rate
+in step 2: the 120 s default buys on the order of 10⁹ of them. The same O(n²) bound
+lands a factor of four apart on n depending only on what sits in the inner loop, which
+is why there is no single number to quote here — do the multiplication for the brute
+force you actually wrote, then check it against the clock in step 7.
 
 Tune that budget down, not just up. It is spent in full on every test the brute force
 cannot finish *before* `reference_fast` is tried, so five hopeless tests at the default
