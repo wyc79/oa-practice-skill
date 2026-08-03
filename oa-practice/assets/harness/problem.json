@@ -1,0 +1,9 @@
+{
+  "name": "PROBLEM_SLUG",
+  "language": "cpp",
+  "entry": "main.cpp",
+  "time_limit_ms": 3000,
+  "checker": "token",
+  "float_eps": 1e-6,
+  "seed": 20260803
+}
