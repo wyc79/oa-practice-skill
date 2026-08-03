@@ -25,7 +25,7 @@ actually hit the intended complexity.
 This repo *is* the skill, so clone it straight into your skills directory:
 
 ```sh
-git clone https://github.com/wyc79/oa-practice ~/.claude/skills/oa-practice
+git clone https://github.com/wyc79/oa-practice-skill ~/.claude/skills/oa-practice
 ```
 
 Update it later with `git -C ~/.claude/skills/oa-practice pull`. Start a new Claude
