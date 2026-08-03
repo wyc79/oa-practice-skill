@@ -22,16 +22,18 @@ answer, that is a separate request and fine to fulfill.
 ├── README.md           # restated statement, constraints, complexity target
 ├── run.sh              # ./run.sh   → samples only, with diffs      ("Run Code")
 ├── judge.sh            # ./judge.sh → all tests, prints k/n (p%)     ("Submit")
-├── oa.py               # harness engine (run / judge / gen / case / selfcheck)
+├── oa.py               # harness engine (run / judge / gen / answers / case / selfcheck)
 ├── tests/samples/      # sample1.in, sample1.out, sample2.in, ...
 └── .oa/
-    ├── reference.py    # brute-force correct solution — SPOILERS
-    ├── gen.py          # test generator: edge cases + randoms + max-size stress
-    └── checker.py      # only when multiple outputs are valid
+    ├── gen.py          # declared constraint bounds + edge cases + randoms + stress
+    ├── checker.py      # only when multiple outputs are valid
+    └── ref/            # SPOILERS — one level down so they are not sitting in the way
+        ├── reference.py       # brute force: the oracle
+        └── reference_fast.py  # intended algorithm; only when brute can't reach the limits
 ```
 
 The hidden tests are not shipped as files — `.oa/gen.py` produces the inputs and
-`.oa/reference.py` produces the expected outputs, deterministically from a seed.
+`.oa/ref/reference.py` produces the expected outputs, deterministically from a seed.
 That is what makes a 20+ test suite cheap to build and impossible to hardcode against.
 
 ## Workflow
@@ -70,41 +72,68 @@ and stub shapes.
 Copy them verbatim from the statement into `tests/samples/sampleN.in` / `.out`.
 Verbatim matters: a "corrected" sample hides a misreading of the statement.
 
-### 5. `.oa/reference.py` — the brute force
+### 5. `.oa/ref/reference.py` — the brute force
 
 `solve(data: str) -> str` takes the whole input file, returns the whole output.
 Write the dumbest correct thing: exponential enumeration, O(n³) DP, simulation.
 Its only job is to disagree with the user when the user is wrong, so clarity beats
-speed — but it must finish on the largest generated case in a few seconds, which is
-what caps the size of the stress tests in step 6.
+speed. `oa.py answers` gives it `ref_time_limit_ms` per test (default 120 s) and
+caches every answer, so slow is genuinely fine — at that budget an O(n²) Python brute
+force reaches n ≈ 3000 and anything cheaper reaches the real limits.
 
-If brute force isn't feasible even at small sizes, say so and fall back to a
-correct-but-slower-than-intended approach, or a validating checker.
+If it still can't answer the largest generated case, add `.oa/ref/reference_fast.py`
+with the intended algorithm. It answers only the tests the brute force times out on,
+and the harness runs both on every test the brute force *can* finish and fails if they
+ever disagree — so the shortcut is validated everywhere it's checkable before it is
+trusted anywhere it isn't. Never write only a fast reference: with nothing to
+cross-check against, a wrong one silently sets wrong answers on the hardest tests.
 
 ### 6. `.oa/gen.py` — the test suite
 
-`cases(rng)` yields input strings. Aim for **22–30 tests** in this order:
+**Transcribe the constraint line first**, before writing a single case. It becomes
+`LIMITS`, and `measure()` reads those same quantities back off a generated input:
 
-1. **Edge cases first** (~6–10, hand-written): minimum size, all-equal, all-negative, empty-ish, single element, max value, duplicates, already-sorted and reverse-sorted, disconnected graph, answer-is-zero, answer-is-the-whole-input.
+```python
+# 0 <= n <= 2*10^5
+# -10^9 <= a[i] <= 10^9
+LIMITS = {"n": (0, 200000), "a_i": (-10**9, 10**9)}
+
+
+def measure(data):
+    t = data.split()
+    n = int(t[0])
+    return {"n": n, "a_i": [int(x) for x in t[1:1 + n]]}
+```
+
+`oa.py gen` then enforces what used to be a matter of remembering: every declared
+endpoint must be reached by some test, one test must attain every upper bound at once,
+and nothing may fall outside a declared bound. Declare derived limits too — `Σn` over a
+multi-test file, `n*m` for grids, `T`, alphabet size — those are the ones that get
+skipped. Boundaries are now mechanical; what still takes judgement is everything else.
+
+`cases(rng)` yields input strings, or `(label, data)` pairs so a failure reads
+`FAIL t01-nzero`. Aim for **22–30 tests**:
+
+1. **Shape edges** (~6–10, hand-written): all-equal, already-sorted and reverse-sorted, duplicates, disconnected graph, answer-is-zero, answer-is-the-whole-input. No bound declaration can express these.
 2. **Small randoms** (~8–10): sizes 1–8 with a tiny value range, so collisions and duplicates happen constantly. These catch the most bugs per byte — with the brute force as an oracle this is effectively random differential testing.
-3. **Medium randoms** (~4–6): a few hundred elements, realistic values.
-4. **Max-size stress** (~2–4): the largest input the constraints allow. This is the test that fails the O(n²) solution and the 32-bit accumulator, so it must be at the real limit. Cap it only if the reference can't keep up — and if you cap it, put a note in the README so the user knows the harness won't catch their TLE.
+3. **A geometric size ladder** (~4–5): n = 1000, 4000, 16000 … up to the limit. Without a spread of sizes the scaling report at the end of `judge` has nothing to fit and says so.
+4. **Max-size stress** (~2–4) **and the joint max corner**: the largest input the constraints allow, plus one test with *every* declared bound maxed at once. That corner is where the 32-bit accumulator overflows.
 
-Every generated input must satisfy the stated constraints (valid tree, valid
-permutation, sum bounds, no self-loops). Use only `rng` — reproducibility is what makes
-a failing test debuggable.
+Use only `rng` — reproducibility is what makes a failing test debuggable.
 
 ### 7. Verify before handing over
 
 ```bash
-cd <slug> && python3 oa.py selfcheck   # reference must reproduce every sample
-python3 oa.py gen                      # generator must run clean at full size
+cd <slug> && python3 oa.py gen         # boundary coverage must come back clean
+python3 oa.py selfcheck                # references must reproduce every sample
+python3 oa.py answers                  # the slow pass; resumable, cached
 ./run.sh                               # stub must compile and fail loudly
 ```
 
 `selfcheck` failing means the statement was misread. Fix it there — otherwise the user
 spends an hour debugging correct code against a wrong oracle, which is the single worst
-failure mode of this whole setup.
+failure mode of this whole setup. It is also the only place either reference meets
+ground truth the harness did not produce itself, so it covers the fast one too.
 
 Optionally sanity-check the judge by pointing `entry` at a throwaway correct solution,
 confirming 100%, then deleting it. Do this when the I/O format is at all unusual.
@@ -119,7 +148,10 @@ Present the folder and keep it short:
 ```
 
 Mention the time limit, the complexity target if the constraints imply one, and that
-`.oa/` contains spoilers. Then get out of the way.
+`.oa/` contains spoilers. Worth one line: a passing `judge` also prints a scaling
+report — measured time and peak memory against input size, with a fitted growth
+exponent — so they can see whether they hit the intended complexity rather than just
+squeaking under the limit. Then get out of the way.
 
 ## Modes worth knowing
 
@@ -131,13 +163,15 @@ against the input and compare its *score* to the reference's — never string-co
 **Interactive / stateful problems**: out of scope for the harness as-is. Say so and
 offer a fixed-transcript approximation instead.
 
-**Very large inputs** (10⁶+ numbers): generating these in Python is slow but fine once,
-since `tests/hidden/` is cached after the first `judge`. Warn the user the first run
-takes a minute.
+**Very large inputs** (10⁶+ numbers): `oa.py gen` writes the inputs quickly; the slow
+part is `oa.py answers`, which is a separate command for exactly that reason. It writes
+each answer the moment it lands, so an interrupt costs one test rather than the suite,
+and a rerun picks up where it stopped. Run it yourself before handing over so the user
+never waits.
 
 **Follow-up problems**: scaffold each into its own folder under the same parent so the
-user builds up a practice set. Reuse the harness — only `main`, samples, `reference.py`,
-and `gen.py` change.
+user builds up a practice set. Reuse the harness — only `main`, samples, `ref/`, and
+`gen.py` change.
 
 ## Reference
 

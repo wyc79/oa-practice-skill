@@ -1,8 +1,9 @@
 # Authoring reference
 
 Contents: [problem.json](#problemjson) · [main file patterns](#main-file-patterns) ·
-[reference solutions](#reference-solutions) · [generator recipes](#generator-recipes) ·
-[checkers](#checkers) · [harness commands](#harness-commands)
+[constraint boundaries](#constraint-boundaries) · [reference solutions](#reference-solutions) ·
+[generator recipes](#generator-recipes) · [checkers](#checkers) ·
+[harness commands](#harness-commands)
 
 ## problem.json
 
@@ -15,6 +16,7 @@ Contents: [problem.json](#problemjson) · [main file patterns](#main-file-patter
 | `checker` | `token` (default, whitespace-insensitive) \| `exact` \| `float` \| `custom` |
 | `float_eps` | relative tolerance for `float` |
 | `seed` | generator seed; changing it reshuffles the hidden tests |
+| `ref_time_limit_ms` | per-test budget for the reference during `answers` (default 120000) |
 | `build_cmd` / `run_cmd` | escape hatch for any other language |
 
 Rust example:
@@ -73,6 +75,92 @@ public:
 };
 ```
 
+## Constraint boundaries
+
+`.oa/gen.py` declares the statement's limits as data, and the harness checks the suite
+actually reaches them. Transcribe the constraint line into a comment first — a
+misreading is then visible on the page rather than buried in a generator loop.
+
+```python
+# 0 <= n <= 2*10^5
+# -10^9 <= a[i] <= 10^9
+LIMITS = {"n": (0, 200000), "a_i": (-10**9, 10**9)}
+
+
+def measure(data):
+    """Read the declared quantities back off a generated input."""
+    t = data.split()
+    n = int(t[0])
+    return {"n": n, "a_i": [int(x) for x in t[1:1 + n]]}
+```
+
+Each value is a scalar or a list; a list contributes its own min and max. A key may be
+absent when it does not apply — an `n = 0` input has no `a_i`, and that is fine.
+`measure` mirrors the parsing in `reference.py`, so write it right after that one.
+
+`oa.py gen` then hard-fails on three things: an endpoint no test reaches, a value
+outside its declared bound, and no single test attaining every upper bound at once.
+It warns, but does not fail, when that joint corner is not *saturated* — `n = 10^6`
+with one `a_i = 10^9` is a much weaker overflow probe than all of them at `10^9`, but
+only you know whether saturating is legal here.
+
+Declare derived quantities, not just the ones with a letter in the statement. These
+are the limits that get skipped:
+
+| constraint | key |
+|---|---|
+| `Σn <= 2*10^5` across a multi-test file | `sum_n` |
+| `n + m <= 10^5` | `n_plus_m` |
+| grid `n*m <= 10^6` | `n_times_m` |
+| `1 <= T <= 100` | `T` |
+| total string length, edge count, weight range, alphabet size | one key each |
+
+**Coupled bounds.** A budget shared between two variables — `n + m <= 10^5`,
+`n*m <= 10^6` — means no input can max both, so the joint corner is unsatisfiable as
+stated. Mark those keys `(lo, hi, "no-corner")` to drop them from the corner
+requirement, and declare the derived key so the real limit is still enforced
+somewhere. Endpoint coverage still applies to each, and the coverage table prints
+which keys were exempted.
+
+The catch: under a shared budget the *effective* max of each variable is lower than
+the number in the statement. With `1 <= n, m` and `n + m <= 100`, the statement may
+say `n <= 100`, but `m >= 1` puts n's real ceiling at 99. Declare the effective bound
+— and if you copy the printed one by mistake, coverage fails with `MISSING max` on a
+bound nothing can reach, which is the check doing its job:
+
+```
+  n                 1 .. 100  MISSING max  reached 1 .. 99
+  m                 1 .. 100  MISSING max  reached 1 .. 99
+  n_plus_m          2 .. 100  min t04-min  max t01-nmax  OK
+```
+
+One more thing the corner check cannot know: a shared budget has several distinct
+worst shapes — `n=99, m=1`, `n=1, m=99`, `n=m=50` — that exercise different code
+paths, and only one is needed to satisfy the corner. Yield all of them.
+
+Per family, `measure` is a few lines:
+
+```python
+# graph: n, m, and the largest weight
+def measure(data):
+    t = data.split()
+    n, m = int(t[0]), int(t[1])
+    w = [int(t[4 + 3 * i]) for i in range(m)]
+    return {"n": n, "m": m, "w": w}
+
+# multi-test: T and the sum of n, which is usually the binding constraint
+def measure(data):
+    lines = data.split("\n")
+    T = int(lines[0])
+    ns = [int(lines[1 + 2 * i]) for i in range(T)]
+    return {"T": T, "n": ns, "sum_n": sum(ns)}
+
+# grid: both dimensions and their product
+def measure(data):
+    r, c = (int(x) for x in data.split("\n")[0].split())
+    return {"r": r, "c": c, "area": r * c}
+```
+
 ## Reference solutions
 
 `solve(data: str) -> str`, whole input in, whole output out. Correct and obvious beats
@@ -86,14 +174,35 @@ fast. Useful shapes:
 Raise `sys.setrecursionlimit(1 << 25)` for deep recursion. Return a string (or anything
 `str()`-able); the harness normalizes the trailing newline.
 
-When you can't brute-force: implement the intended algorithm carefully, note it in the
-README so the user knows a shared misreading would go undetected, and lean harder on
-edge-case tests.
+### Two tiers
+
+`oa.py answers` runs `ref/reference.py` in a subprocess with a `ref_time_limit_ms`
+budget (default 120 s) and caches each answer as it lands. Slow is fine; only *hopeless*
+is a problem. At that budget an O(n²) Python brute force reaches n ≈ 3000.
+
+Beyond that, add `ref/reference_fast.py` with the intended algorithm:
+
+- The brute force answers every test it can finish, and stays the oracle.
+- The fast one answers only the tests the brute force times out on.
+- On every test the brute force *did* finish, both run and must agree. A disagreement
+  fails the pass and names the input — one of the two is wrong, and which one is not
+  yet known.
+- `oa.py selfcheck` checks both against the statement's samples. That is the only
+  ground truth the harness did not generate itself, so neither reference skips it.
+
+Never ship a fast reference alone. With nothing to cross-check against it silently
+defines the expected answer on exactly the max-bound tests that matter most.
+
+If even a fast reference is impractical, lower the bound in `LIMITS` and say so in the
+README. There is no waiver flag on purpose: a shrunken bound is a visible edit, while a
+config toggle reads as covered when it is not.
 
 ## Generator recipes
 
-`cases(rng)` yields input strings. Only use `rng`. Order: edge → small random →
-medium → max stress.
+`cases(rng)` yields input strings, or `(label, data)` pairs — the label lands in the
+test name, so a failure reads `FAIL t01-nzero` instead of `FAIL t01`. Keep labels
+short; the user types them into `oa.py case`. Only use `rng`. Order: boundary → shape
+→ small random → size ladder → max stress and the joint corner.
 
 **Array**
 
@@ -129,12 +238,25 @@ statement requires it.
 **Weighted**: keep weights small in random tests (collisions), then one max-weight case
 to catch overflow.
 
+**Size ladder**: a geometric run of sizes — 1000, 4000, 16000, … — so the scaling
+report after a passing `judge` has something to fit. Without spread it declines to
+estimate rather than guessing, which is correct but less useful.
+
+```python
+n = 1000
+while n < MAXN:
+    yield f"n{n}", fmt([rng.randint(-10**6, 10**6) for _ in range(n)])
+    n *= 4
+```
+
 **Max stress**: exactly the constraint limit. Build with `"".join`/`" ".join`, not
 `+=` in a loop. If Python generation is slow, remember it only runs once —
-`tests/hidden/` is cached until `oa.py gen` or `judge --force`.
+`tests/hidden/` is cached until `oa.py gen` or `--force`.
 
-Always assert the constraints hold before yielding. A generated input that violates the
-statement produces a "failure" the user cannot fix, which destroys trust in the score.
+You no longer need to assert the constraints by hand: any value outside a declared
+`LIMITS` bound fails `oa.py gen` with the test name and the offending value. A
+generated input that violates the statement produces a "failure" the user cannot fix,
+which destroys trust in the score — so this one is enforced rather than remembered.
 
 ## Checkers
 
@@ -165,13 +287,42 @@ Return a reason string; it shows up next to the FAIL line and saves the user a d
 ```
 python3 oa.py run              # samples only, prints diffs
 python3 oa.py judge            # samples + hidden, prints Score: k/n (p%)
-python3 oa.py judge --force    # regenerate hidden tests first
+python3 oa.py judge --force    # discard cached tests and answers first
 python3 oa.py judge --reveal 0 # score only, no diffs — true OA mode
-python3 oa.py case t07         # rerun one test with full detail
-python3 oa.py gen              # rebuild tests/hidden/
-python3 oa.py selfcheck        # reference vs samples — run before handing over
+python3 oa.py case t07-max     # rerun one test with full detail
+python3 oa.py gen              # rebuild tests/hidden/*.in + boundary coverage (fast)
+python3 oa.py answers          # compute the expected outputs (slow, resumable)
+python3 oa.py selfcheck        # both references vs samples + coverage — before handing over
 ```
 
 Verdicts: `PASS` · `FAIL` (wrong answer, with the first differing token) · `TLE` ·
 `RE` (nonzero exit / crash, with stderr). Exit code 0 only when everything passes, so
 `judge.sh` drops straight into a git hook or CI step.
+
+## Scaling report
+
+A `judge` run that passes everything ends with measured time and peak memory against
+input size, and a fitted growth exponent:
+
+```
+Scaling — largest tests, by input size
+    19.5 KB       95 ms     12.6 MB   t06-n2700
+    87.0 KB      545 ms     13.3 MB   t07-max
+  time   ~ n^1.69  — above linear  (34 ms startup subtracted)
+  memory ~ n^0.95  (12.3 MB runtime baseline subtracted)
+```
+
+Peak memory is exact on Windows and Linux, and reports `n/a` elsewhere rather than a
+number that would quietly mean something else. Both curves have a large constant term
+— process startup, and the runtime's baseline heap — which is subtracted before
+fitting; without that, a perfectly linear solution reads as sub-linear.
+
+Each fit is gated, because a curve through noise is worse than no curve. If the
+largest test runs close to the startup floor, or the suite has no spread of sizes, the
+report says so instead of printing an exponent. Two consequences worth knowing: a fast
+solution on small inputs often gets no time estimate at all — that is the expected
+outcome, not a failure — and the estimate is far sharper for C++ (millisecond startup)
+than for Python (tens of milliseconds of it).
+
+Reference timings recorded during `answers` are shown alongside for scale. They are
+Python, so treat the ratio as a sanity check rather than a benchmark.
