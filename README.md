@@ -22,14 +22,25 @@ actually hit the intended complexity.
 
 ## Install
 
-This repo *is* the skill, so clone it straight into your skills directory:
+The skill lives in [`oa-practice/`](oa-practice/); everything beside it is repo
+scaffolding. Clone, then copy that one directory into your skills folder:
 
 ```sh
-git clone https://github.com/wyc79/oa-practice-skill ~/.claude/skills/oa-practice
+git clone https://github.com/wyc79/oa-practice-skill
+cp -r oa-practice-skill/oa-practice ~/.claude/skills/
 ```
 
-Update it later with `git -C ~/.claude/skills/oa-practice pull`. Start a new Claude
-Code session and it will pick the skill up.
+To have `git pull` update the installed skill, symlink instead of copying:
+
+```sh
+git clone https://github.com/wyc79/oa-practice-skill ~/src/oa-practice-skill
+ln -s ~/src/oa-practice-skill/oa-practice ~/.claude/skills/oa-practice
+```
+
+On Windows use `mklink /D "%USERPROFILE%\.claude\skills\oa-practice" "<clone>\oa-practice"`,
+which needs an elevated prompt or Developer Mode.
+
+Either way, start a new Claude Code session afterwards so the skill is picked up.
 
 ## Use
 
@@ -55,17 +66,19 @@ Claude scaffolds a folder and hands it back. From then on it is just:
   Python needs nothing extra.
 
 Other languages go through `build_cmd` / `run_cmd` in `problem.json`; see
-[references/authoring.md](references/authoring.md).
+[oa-practice/references/authoring.md](oa-practice/references/authoring.md).
 
 ## Layout
 
 ```
-SKILL.md              # the workflow Claude follows
-references/           # authoring reference: parsing, generators, checkers
-scripts/scaffold.py   # stamps out a new problem folder
-assets/
-├── harness/          # oa.py and the run/judge wrappers
-└── stubs/            # main.cpp, main.py
+oa-practice/              # <- this is the skill; copy this into ~/.claude/skills/
+├── SKILL.md              # the workflow Claude follows
+├── references/           # authoring reference: parsing, generators, checkers
+├── scripts/scaffold.py   # stamps out a new problem folder
+└── assets/
+    ├── harness/          # oa.py and the run/judge wrappers
+    └── stubs/            # main.cpp, main.py
+README.md  LICENSE        # repo scaffolding, not part of the skill
 ```
 
 ## License
