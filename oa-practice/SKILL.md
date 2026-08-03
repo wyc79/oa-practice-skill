@@ -23,7 +23,8 @@ answer, that is a separate request and fine to fulfill.
 ├── problem.json        # language, time limit, checker mode
 ├── README.md           # restated statement, constraints, complexity target
 ├── run.sh, run.cmd     # samples only, with diffs                    ("Run Code")
-├── judge.sh, judge.cmd # all tests, prints k/n (p%)                   ("Submit")
+├── judge.sh, judge.cmd # all tests, prints k/n (p%) and nothing else  ("Submit")
+├── oa.sh, oa.cmd       # any other harness command, same interpreter probe
 ├── oa.py               # harness engine (run / judge / gen / answers / case / selfcheck)
 ├── tests/samples/      # sample1.in, sample1.out, sample2.in, ...
 └── .oa/
@@ -38,8 +39,9 @@ Nothing ships the tests themselves — `.oa/gen.py` produces the inputs and
 `.oa/ref/reference.py` the expected outputs, deterministically from a seed. That is
 what makes a 20+ test suite cheap to build and reproducible. Be straight with the user
 about what "hidden" means here: once generated they sit in `tests/hidden/`, so this is
-honour-system, not sealed. `judge --reveal 0` is the strict mode — a score and nothing
-else, no diffs and no expected values.
+honour-system, not sealed. `judge` itself behaves like the real thing by default — a
+score and a PASS/FAIL list, no diffs and no expected values — and `--reveal N` is the
+deliberate step out of that when they would rather learn than be scored.
 
 ## Workflow
 
@@ -201,11 +203,13 @@ Use only `rng` — reproducibility is what makes a failing test debuggable.
 ### 7. Verify before handing over
 
 ```bash
-cd <slug> && python3 oa.py gen         # boundary coverage must come back clean
-python3 oa.py selfcheck                # references must reproduce every sample
-python3 oa.py answers                  # the slow pass; resumable, cached
+cd <slug> && ./oa.sh gen               # boundary coverage must come back clean
+./oa.sh selfcheck                      # references must reproduce every sample
+./oa.sh answers                        # the slow pass; resumable, cached
 ./run.sh                               # stub must compile and fail loudly
 ```
+
+On Windows: `.\oa.cmd gen`, `.\oa.cmd selfcheck`, `.\oa.cmd answers`, `.\run.cmd`.
 
 Iterate freely: `tests/hidden/` records the generator, seed and references it was built
 from, so an edit to any of them rebuilds what it invalidates on the next command rather
@@ -213,10 +217,12 @@ than being silently overridden by the cache. A new case in `gen.py` costs one re
 run; a change to a reference costs the whole answer pass, which is the honest price of
 having changed the oracle.
 
-Run that last one through the wrapper, not `oa.py` directly — it is the only step that
-proves the button the user will actually press works on this machine. On Windows use
-`.\run.cmd`. If it exits 127 the interpreter probe came up empty; set `OA_PYTHON` and
-say so in the README.
+Go through the wrappers rather than calling `oa.py` directly. They probe for a working
+interpreter; a bare `python3` does not, and on Windows it usually resolves to a
+Microsoft Store stub that exits without running anything — so the authoring steps would
+be the ones that fail on a machine where the buttons are fine. `./run.sh` matters most:
+it is the only step that proves the button the user will actually press works here. If
+anything exits 127 the probe came up empty; set `OA_PYTHON` and say so in the README.
 
 `selfcheck` failing means the statement was misread. Fix it there — otherwise the user
 spends an hour debugging correct code against a wrong oracle, which is the single worst
@@ -241,10 +247,21 @@ Present the folder and keep it short:
 The `.\` matters: neither PowerShell nor `cmd /c` will run a batch file from the
 current directory without it.
 
+Say what each button gives back, because they differ on purpose. `run.sh` explains
+every failing sample in full — the statement already prints those, so there is nothing
+to protect. `judge.sh` returns a percentage and a per-test PASS/FAIL list, and no diffs
+or expected values at all: on a real OA the expected output of a hidden test *is* the
+answer. Two ways through that wall when they want to learn rather than be scored, and
+both are worth naming up front:
+
+```
+./judge.sh --reveal 1   # explain the first failure: input, expected, yours
+./oa.sh case t07-max    # replay any one test in full     (Windows: .\oa.cmd case ...)
+```
+
 Mention the time limit, the complexity target if the constraints imply one, and that
 both `.oa/` and `tests/hidden/*.out` will spoil them — the first holds the algorithm,
-the second the answers. If they want it strict, `judge --reveal 0` prints the score
-and nothing else — no diffs, no expected values. Worth one line: a passing `judge` also prints a scaling
+the second the answers. Worth one line: a passing `judge` also prints a scaling
 report — measured time and peak memory against input size, with a fitted growth
 exponent — so they can see whether they hit the intended complexity rather than just
 squeaking under the limit. It declines to print an exponent it cannot stand behind, and

@@ -290,15 +290,18 @@ Return a reason string; it shows up next to the FAIL line and saves the user a d
 ## Harness commands
 
 ```
-python3 oa.py run              # samples only, prints diffs
-python3 oa.py judge            # samples + hidden, prints Score: k/n (p%)
-python3 oa.py judge --force    # discard cached tests and answers first
-python3 oa.py judge --reveal 0 # score only — true OA mode
-python3 oa.py case t07-max     # rerun one test with full detail
-python3 oa.py gen              # rebuild tests/hidden/*.in + boundary coverage (fast)
-python3 oa.py answers          # compute the expected outputs (slow, resumable)
-python3 oa.py selfcheck        # both references vs samples + coverage — before handing over
+./run.sh                  # samples only, explains every failure
+./judge.sh                # samples + hidden, prints Score: k/n (p%) — no diffs
+./judge.sh --force        # discard cached tests and answers first
+./judge.sh --reveal 1     # ...and explain the first failure after all
+./oa.sh case t07-max      # rerun one test with full detail
+./oa.sh gen               # rebuild tests/hidden/*.in + boundary coverage (fast)
+./oa.sh answers           # compute the expected outputs (slow, resumable)
+./oa.sh selfcheck         # both references vs samples + coverage — before handing over
 ```
+
+Windows: `.\run.cmd`, `.\judge.cmd`, `.\oa.cmd <cmd>`. All three wrappers forward to
+`oa.py`, which you can also call directly if you already know your interpreter's name.
 
 `tests/hidden/` records what built it in `_stamp.json` — a hash of `.oa/gen.py`, the
 seed, and a hash of each reference — and every command checks it, so an edit you make
@@ -313,13 +316,28 @@ stale cache rather than describing tests the next `judge` will replace.
 `--reveal N` explains the first N failures and no more, where "explains" covers the
 one-line reason as well as the input/expected/actual block — `token 0: got '0', want
 '200000000000000'` is the answer, so at `--reveal 0` a failing test prints its name and
-timing and nothing else. The default is 1.
+timing and nothing else.
+
+The default differs by command, because what a failure may safely say about itself
+differs by command:
+
+| | default | why |
+|---|---|---|
+| `run` | every sample | the statement already prints these; hiding them helps nobody |
+| `judge` | none | the expected output of a hidden test *is* the answer |
+| `case <name>` | 1 | naming a test is an explicit request to see it |
+
+That makes `judge` a real submit button rather than a generous one, and leaves two
+deliberate ways back out for a user who wants to learn rather than be scored:
+`judge --reveal 1`, and `case <name>` on whichever test the score said was red. A
+failing `judge` prints that pair as a one-line reminder — the escape hatch is no use
+if only the person who built the folder knows it is there.
 
 Verdicts: `PASS` · `FAIL` (wrong answer, with the first differing token) · `TLE` ·
 `RE` (nonzero exit / crash, with stderr) · `SKIP` (a `tests/samples/*.in` with no
-matching `.out` — unscorable, so it leaves the denominator). Exit code 0 only when
-everything passes *and* something was scored, so `judge.sh` drops straight into a git
-hook or CI step.
+matching `.out` — unscorable, so it leaves the denominator). Every command that scores
+something — `run`, `judge` and `case` alike — exits 0 only when everything passes *and*
+something was scored, so `judge.sh` drops straight into a git hook or CI step.
 
 The `slowest` figure in the summary line counts only runs that finished inside the
 limit. A killed process reports three times the limit by construction and a crash on
@@ -327,10 +345,13 @@ Windows spends seconds in the error reporter, so folding either in would print a
 number that appears in none of the rows above it; tests over the limit are counted
 separately instead.
 
-Wrappers: `./run.sh` and `./judge.sh` on macOS/Linux, `run.cmd` and `judge.cmd` on
-Windows. Each probes for a working Python 3 rather than assuming `python3` resolves to
-one — it does not on Windows, where `python3.exe` is usually the Microsoft Store stub.
-Set `OA_PYTHON` to override.
+Wrappers: `./run.sh`, `./judge.sh` and `./oa.sh <cmd>` on macOS/Linux; `run.cmd`,
+`judge.cmd` and `oa.cmd <cmd>` on Windows. Each probes for a working Python 3 rather
+than assuming `python3` resolves to one — it does not on Windows, where `python3.exe`
+is usually the Microsoft Store stub and `py` may not exist at all. `oa.sh`/`oa.cmd`
+exist so the authoring commands get the same probe the two buttons get; without them
+`gen`, `answers` and `selfcheck` are the steps that fail on a machine where `run.sh`
+and `judge.sh` are fine. Set `OA_PYTHON` to override.
 
 ## Scaling report
 

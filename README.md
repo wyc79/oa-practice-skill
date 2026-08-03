@@ -62,7 +62,13 @@ Claude scaffolds a folder and hands it back. From then on it is just:
 |---|---|---|
 | Run the samples | `./run.sh` | `.\run.cmd` |
 | Submit for a score | `./judge.sh` | `.\judge.cmd` |
-| Score only, no hints | `./judge.sh --reveal 0` | `.\judge.cmd --reveal 0` |
+| Submit, explain the first failure | `./judge.sh --reveal 1` | `.\judge.cmd --reveal 1` |
+| Replay one test in full | `./oa.sh case t07-max` | `.\oa.cmd case t07-max` |
+
+`run` explains every failing sample; the statement prints those anyway. `judge` returns
+a score and which tests were red, and no diffs — on a real OA the expected output of a
+hidden test *is* the answer. The last two rows are the deliberate way past that when
+you would rather learn than be scored.
 
 ## Requirements
 
@@ -84,7 +90,7 @@ oa-practice/              # <- this is the skill; copy this into ~/.claude/skill
 ├── references/           # authoring reference: parsing, generators, checkers
 ├── scripts/scaffold.py   # stamps out a new problem folder
 └── assets/
-    ├── harness/          # oa.py and the run/judge wrappers
+    ├── harness/          # oa.py and the run/judge/oa wrappers
     └── stubs/            # main.cpp, main.py
 README.md  LICENSE        # repo scaffolding, not part of the skill
 ```

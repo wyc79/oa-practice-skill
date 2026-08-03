@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""OA harness: build, run samples, judge against generated tests.
+r"""OA harness: build, run samples, judge against generated tests.
 
-Usage:
+Usage (or ./oa.sh <cmd> / .\oa.cmd <cmd>, which find a working interpreter first):
     python3 oa.py run              # run sample tests, show diffs
     python3 oa.py judge            # full judge run, prints Score: k/n (p%)
     python3 oa.py gen              # (re)write tests/hidden/*.in + boundary coverage
     python3 oa.py answers          # compute the expected outputs (slow, resumable)
     python3 oa.py case <name>      # run one test, show input/expected/actual
     python3 oa.py selfcheck        # check the reference against the samples
+
+`run` explains every failing sample; `judge` explains none, because the expected
+output of a hidden test is the answer. `--reveal N` overrides either way.
 
 Config lives in problem.json. Hidden generator lives in .oa/, reference solutions
 in .oa/ref/.
@@ -1006,7 +1009,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["run", "judge", "gen", "answers", "case", "selfcheck"])
     ap.add_argument("name", nargs="?")
-    ap.add_argument("--reveal", type=int, default=1, help="how many failing tests to print in full")
+    ap.add_argument("--reveal", type=int, default=None,
+                    help="how many failing tests to explain in full "
+                         "(default: every sample for run, none for judge)")
     ap.add_argument("--force", action="store_true", help="discard cached tests / answers")
     a = ap.parse_args()
     c = cfg()
@@ -1030,7 +1035,11 @@ def main():
         if not ts:
             die("no sample tests in tests/samples/")
         print(f"{B}Samples{X}")
-        p, t, _ = execute(c, argv, ts, a.reveal, "Samples")
+        # Explain every failing sample, not just the first. A sample's expected output
+        # is printed in the statement and sitting in tests/samples/*.out, so there is
+        # nothing here to give away — and "Run Code" that will not show you why a
+        # sample failed is the one button on a real OA that always does.
+        p, t, _ = execute(c, argv, ts, len(ts) if a.reveal is None else a.reveal, "Samples")
         # `and t`: a suite that scored nothing has not passed, and p == t == 0 would
         # otherwise exit 0 and read as green.
         sys.exit(0 if p == t and t else 1)
@@ -1039,8 +1048,10 @@ def main():
         pool = {n: (n, i, e) for n, i, e in samples() + (hidden() if HIDDEN.exists() else [])}
         if a.name not in pool:
             die(f"no such test {a.name!r}; have: {', '.join(sorted(pool))}")
-        execute(c, argv, [pool[a.name]], 1, "Case")
-        return
+        # Naming a test is an explicit request to see it, so `case` explains by default
+        # where `judge` does not. This is the deliberate way past the score-only wall.
+        p, t, _ = execute(c, argv, [pool[a.name]], 1 if a.reveal is None else a.reveal, "Case")
+        sys.exit(0 if p == t and t else 1)
 
     # judge
     generate(c, force=a.force)
@@ -1050,9 +1061,17 @@ def main():
     # below it when a sample has no .out.
     print(f"{B}Judging {c.get('name', 'solution')} — "
           f"{sum(1 for _, _, e in ts if e is not None)} tests{X}")
-    p, t, stats = execute(c, argv, ts, a.reveal, "Score")
+    # Submit returns a score. The expected output of a hidden test *is* the answer, so
+    # a real OA hands back a percentage and leaves you to work out which case broke you
+    # — and a harness that volunteers the diff has quietly turned Submit into Run.
+    p, t, stats = execute(c, argv, ts, 0 if a.reveal is None else a.reveal, "Score")
     if p == t and t:
         complexity_report(c, stats)
+    elif a.reveal is None:
+        # But this is still a practice tool, and a score with no route to a diff is a
+        # dead end. Name the two ways through, once, without printing any of it.
+        print(f"{DIM}  --reveal 1 explains the first failure; "
+              f"`case <name>` replays one test in full{X}")
     sys.exit(0 if p == t and t else 1)
 
 

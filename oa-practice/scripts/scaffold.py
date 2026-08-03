@@ -3,7 +3,7 @@
 
     python3 scripts/scaffold.py <slug> [--dir DEST] [--lang cpp|python] [--tl 3000]
 
-Creates DEST/<slug>/ with oa.py, the run/judge wrappers for both platforms,
+Creates DEST/<slug>/ with oa.py, the run/judge/oa wrappers for both platforms,
 problem.json, README.md, a solution stub, tests/samples/, and .oa/gen.py plus
 .oa/ref/reference.py.
 
@@ -66,7 +66,7 @@ def main():
     # is only the fallback that keeps ./run.sh working on the machine it was built on.
     write(dest / ".oa" / "python-path", sys.executable + "\n")
 
-    for f in ("run.sh", "judge.sh", "oa.py"):
+    for f in ("run.sh", "judge.sh", "oa.sh", "oa.py"):
         p = dest / f
         p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
