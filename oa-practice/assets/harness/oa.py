@@ -51,9 +51,12 @@ try:
 except (AttributeError, ValueError):
     pass
 
-# Every file this harness touches is UTF-8, whatever the system codepage says, and
-# problem.json may carry a BOM if it has been through a Windows editor.
-UTF8 = {"encoding": "utf-8"}
+# Every file this harness touches is UTF-8, whatever the system codepage says. Read
+# as utf-8-sig, not utf-8: anything that has been through a Windows editor may carry
+# a BOM — PowerShell's `Set-Content -Encoding utf8` writes one by default — and a BOM
+# left in the string is a hard `SyntaxError: invalid non-printable character U+FEFF`
+# when load_module compiles .oa/gen.py or a reference. Writes stay BOM-less.
+UTF8 = {"encoding": "utf-8-sig"}
 
 
 def read(path):
@@ -352,9 +355,21 @@ def check_limits(gen_mod, tests):
     """
     lim = getattr(gen_mod, "LIMITS", None)
     measure = getattr(gen_mod, "measure", None)
-    if not lim or not measure:
+    if not lim and not measure:
+        # Declaring neither is a real choice, and the folders scaffolded before this
+        # check existed made it. Warn and carry on.
         print(f"  {Y}.oa/gen.py declares no LIMITS/measure — boundaries unchecked{X}")
         return True
+    if not measure:
+        # Half-declared is not a choice, it is an unfinished edit. Warning here would
+        # print "boundaries unchecked" over a file that visibly declares boundaries.
+        print(f"  {R}.oa/gen.py declares LIMITS but no measure(){X} — nothing can read those\n"
+              f"  bounds back off a generated input, so none of them are being checked.")
+        return False
+    if not lim:
+        print(f"  {R}.oa/gen.py defines measure() but no LIMITS{X} — there is nothing to\n"
+              f"  check the measured values against.")
+        return False
 
     obs = {k: {"lo": None, "lo_at": "", "hi": None, "hi_at": "", "listy": False} for k in lim}
     tops, spread, bad = {}, {}, []
@@ -705,10 +720,25 @@ def execute(c, argv, tests, reveal, label):
     passed = 0
     shown = 0
     slowest = 0.0
+    over = skipped = 0
     stats = []
     for name, inp, exp in tests:
+        if exp is None:
+            # A sample .in with no .out. samples() returns these deliberately, so
+            # scoring one is impossible rather than merely inconvenient — say which
+            # file is missing and leave it out of the denominator.
+            print(f"  {Y}SKIP{X} {name:<18} {DIM}no {name}.out to compare against{X}")
+            skipped += 1
+            continue
         status, out, err, ms, mem = run_once(argv, inp, c["time_limit_ms"])
-        slowest = max(slowest, ms)
+        # Only a run that finished inside the limit contributes a real measurement.
+        # A killed process reports limit*3 by construction, and a crashing one on
+        # Windows spends seconds in the error reporter — averaging either into
+        # "slowest" prints a number that appears nowhere in the rows above it.
+        if status == "OK":
+            slowest = max(slowest, ms)
+        elif status == "TLE":
+            over += 1
         used = f"{DIM}{ms:6.0f} ms  {human_bytes(mem):>9}{X}"
         if status == "OK":
             ok, why = compare(c, inp, exp, out)
@@ -729,10 +759,19 @@ def execute(c, argv, tests, reveal, label):
             if shown < reveal:
                 print(f"{R}{err.strip()[:2000]}{X}")
                 shown += 1
-    total = len(tests)
-    pct = 100.0 * passed / total if total else 0.0
+    total = len(tests) - skipped
+    if not total:
+        print(f"\n{R}{B}{label}: nothing to score{X} — every test was skipped for want "
+              f"of an expected output")
+        return 0, 0, stats
+
+    timing = (f"slowest {slowest:.0f} ms" if slowest else "nothing finished")
+    timing += f" / limit {c['time_limit_ms']} ms" + (f", {over} over it" if over else "")
+    if skipped:
+        timing += f", {skipped} skipped"
+    pct = 100.0 * passed / total
     bar = G if passed == total else (Y if passed else R)
-    print(f"\n{bar}{B}{label}: {passed}/{total} ({pct:.0f}%){X}   {DIM}slowest {slowest:.0f} ms / limit {c['time_limit_ms']} ms{X}")
+    print(f"\n{bar}{B}{label}: {passed}/{total} ({pct:.0f}%){X}   {DIM}{timing}{X}")
     return passed, total, stats
 
 
@@ -826,7 +865,9 @@ def main():
             die("no sample tests in tests/samples/")
         print(f"{B}Samples{X}")
         p, t, _ = execute(c, argv, ts, a.reveal, "Samples")
-        sys.exit(0 if p == t else 1)
+        # `and t`: a suite that scored nothing has not passed, and p == t == 0 would
+        # otherwise exit 0 and read as green.
+        sys.exit(0 if p == t and t else 1)
 
     if a.cmd == "case":
         pool = {n: (n, i, e) for n, i, e in samples() + (hidden() if HIDDEN.exists() else [])}
@@ -839,11 +880,14 @@ def main():
     generate(c, force=a.force)
     answers(c, force=a.force)
     ts = samples() + hidden()
-    print(f"{B}Judging {c.get('name', 'solution')} — {len(ts)} tests{X}")
+    # Count what can actually be scored, so the header agrees with the denominator
+    # below it when a sample has no .out.
+    print(f"{B}Judging {c.get('name', 'solution')} — "
+          f"{sum(1 for _, _, e in ts if e is not None)} tests{X}")
     p, t, stats = execute(c, argv, ts, a.reveal, "Score")
-    if p == t:
+    if p == t and t:
         complexity_report(c, stats)
-    sys.exit(0 if p == t else 1)
+    sys.exit(0 if p == t and t else 1)
 
 
 if __name__ == "__main__":

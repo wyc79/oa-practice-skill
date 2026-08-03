@@ -18,7 +18,10 @@ def main():
         importlib.util.spec_from_loader("oa_reference", loader=None))
     mod.__file__ = str(path)
     sys.modules["oa_reference"] = mod
-    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), mod.__dict__)
+    # utf-8-sig, not utf-8: a reference saved by a Windows editor may carry a BOM, and
+    # compile() rejects one left in the string with a bare "invalid non-printable
+    # character U+FEFF" pointing at line 1.
+    exec(compile(path.read_text(encoding="utf-8-sig"), str(path), "exec"), mod.__dict__)
     # Both ends go through .buffer with an explicit encoding: sys.stdin on a cp936
     # or cp1252 console would otherwise mis-decode UTF-8 input, and sys.stdout would
     # turn every "\n" into "\r\n" on Windows.

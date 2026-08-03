@@ -94,6 +94,12 @@ It warns, but does not fail, when that joint corner is not *saturated* — `n = 
 with one `a_i = 10^9` is a much weaker overflow probe than all of them at `10^9`, but
 only you know whether saturating is legal here.
 
+Declaring *neither* `LIMITS` nor `measure` skips the whole check with a warning, which
+is what keeps folders scaffolded before it existed working. Declaring one without the
+other is a fourth hard failure: it is an unfinished edit rather than a choice, and
+"boundaries unchecked" over a file that visibly declares boundaries is the one message
+guaranteed to be read as fine.
+
 Declare derived quantities, not just the ones with a letter in the statement. These
 are the limits that get skipped:
 
@@ -297,8 +303,16 @@ one-line reason as well as the input/expected/actual block — `token 0: got '0'
 timing and nothing else. The default is 1.
 
 Verdicts: `PASS` · `FAIL` (wrong answer, with the first differing token) · `TLE` ·
-`RE` (nonzero exit / crash, with stderr). Exit code 0 only when everything passes, so
-`judge.sh` drops straight into a git hook or CI step.
+`RE` (nonzero exit / crash, with stderr) · `SKIP` (a `tests/samples/*.in` with no
+matching `.out` — unscorable, so it leaves the denominator). Exit code 0 only when
+everything passes *and* something was scored, so `judge.sh` drops straight into a git
+hook or CI step.
+
+The `slowest` figure in the summary line counts only runs that finished inside the
+limit. A killed process reports three times the limit by construction and a crash on
+Windows spends seconds in the error reporter, so folding either in would print a
+number that appears in none of the rows above it; tests over the limit are counted
+separately instead.
 
 Wrappers: `./run.sh` and `./judge.sh` on macOS/Linux, `run.cmd` and `judge.cmd` on
 Windows. Each probes for a working Python 3 rather than assuming `python3` resolves to
