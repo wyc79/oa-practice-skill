@@ -92,8 +92,24 @@ oa-practice/              # <- this is the skill; copy this into ~/.claude/skill
 └── assets/
     ├── harness/          # oa.py and the run/judge/oa wrappers
     └── stubs/            # main.cpp, main.py
+tests/                    # harness test suite — repo scaffolding, not installed
 README.md  LICENSE        # repo scaffolding, not part of the skill
 ```
+
+## Development
+
+`tests/` drives `oa.py` end to end against real scaffolded workspaces, because the
+failures worth catching are the ones where a command exits 0 over a suite that proves
+nothing — a stale cache, an unreached bound, a reference for the wrong problem, an
+entry file that reads a format nobody generates.
+
+```sh
+pip install pytest
+pytest tests/ -q
+```
+
+Needs nothing but Python 3.8+; the workspaces it builds are `--lang python`, so no
+compiler is involved.
 
 ## License
 

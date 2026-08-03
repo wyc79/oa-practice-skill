@@ -7,7 +7,8 @@ Usage (or ./oa.sh <cmd> / .\oa.cmd <cmd>, which find a working interpreter first
     python3 oa.py gen              # (re)write tests/hidden/*.in + boundary coverage
     python3 oa.py answers          # compute the expected outputs (slow, resumable)
     python3 oa.py case <name>      # run one test, show input/expected/actual
-    python3 oa.py selfcheck        # check the reference against the samples
+    python3 oa.py selfcheck        # references vs samples, coverage, staleness
+    python3 oa.py selfcheck --entry _check.py   # ...and the entry file's I/O
 
 `run` explains every failing sample; `judge` explains none, because the expected
 output of a hidden test is the answer. `--reveal N` overrides either way.
@@ -543,8 +544,21 @@ def why_stale(want, subject):
     return f"{', '.join(stale(want))} changed since {subject} were built"
 
 
-def generate(c, force=False):
-    """Write tests/hidden/*.in from .oa/gen.py, then check boundary coverage."""
+def coverage_or_die(gen, tests):
+    print(f"{B}Boundary coverage{X}")
+    if not check_limits(gen, tests):
+        die("\nboundary coverage failed — fix .oa/gen.py and rerun")
+
+
+def generate(c, force=False, report=False):
+    """Write tests/hidden/*.in from .oa/gen.py, then check boundary coverage.
+
+    `report` marks the explicit `gen` command, as against the implicit calls judge
+    and answers make on every run. Those two want silence when there is nothing to
+    do; `gen` still owes an answer, because checking coverage is most of why anyone
+    runs it — and because a `gen` that fails coverage leaves the cache behind, so a
+    second `gen` printing nothing would read as the failure having cleared itself.
+    """
     refuse_template(ROOT / ".oa" / "gen.py")
     gen = load_module(ROOT / ".oa" / "gen.py", "oa_gen")
     if gen is None:
@@ -554,6 +568,9 @@ def generate(c, force=False):
     want = input_stamp(c)
     changed = stale(want)
     if cached and not force and not changed:
+        if report:
+            print(f"{DIM}{len(cached)} test inputs already current{X}")
+            coverage_or_die(gen, [(f.stem, read(f)) for f in cached])
         return
     if cached and changed and not force:
         print(f"{Y}{why_stale(want, 'these tests')} — rebuilding them{X}")
@@ -584,14 +601,18 @@ def generate(c, force=False):
             continue
         write(inp, data)
         out.unlink(missing_ok=True)
-    save_stamp(**want)
 
     reuse = f"{DIM}, {kept} cached answers still valid{X}" if kept else ""
     print(f"{DIM}generated {len(tests)} test inputs{X}{reuse}")
 
-    print(f"{B}Boundary coverage{X}")
-    if not check_limits(gen, tests):
-        die("\nboundary coverage failed — fix .oa/gen.py and rerun")
+    coverage_or_die(gen, tests)
+    # Stamp only once coverage has passed, never before. The stamp is what every
+    # other command reads as "this cache is current", and a cache that failed its
+    # boundary check is not something to be current with: stamping first meant a
+    # failed `gen` left a suite the next `judge` accepted on the silent fast path,
+    # printing 100% over tests that never reached their own declared bounds. Left
+    # unstamped it gets rebuilt and rechecked instead, so the failure stays failed.
+    save_stamp(**want)
 
 
 def run_reference(path, data, limit_ms):
@@ -675,8 +696,12 @@ def answers(c, force=False):
             beyond.append(f.stem)
 
         write(f.with_suffix(".out"), str(out).rstrip("\n") + "\n")
+        # Alongside the answer, not after the loop. The pass is resumable and expected
+        # to be interrupted, and a resumed run only recomputes what has no .out — so a
+        # timing left unwritten here is lost for good, and the scaling report quietly
+        # drops its reference comparison.
+        write(HIDDEN / TIMINGS, json.dumps(timings, indent=1))
 
-    write(HIDDEN / TIMINGS, json.dumps(timings, indent=1))
     if FAST.exists():
         print(f"  {DIM}cross-check: reference_fast agrees with reference on "
               f"{agreed}/{agreed} checkable tests{X}  {G}OK{X}")
@@ -809,15 +834,22 @@ def complexity_report(c, stats):
               f"— too narrow to fit. Add a geometric size ladder to .oa/gen.py.{X}")
         return
 
-    # Points sitting within a few ms of the floor are startup jitter, not work. They
-    # span decades of x at a constant y, which flattens the slope of even a quadratic
-    # solution towards zero, so they are dropped rather than fitted.
-    # Time's floor is absolute — a few milliseconds is the clock's own resolution.
-    # Memory's is relative: the smallest tests differ from the baseline by an
-    # allocator rounding rather than by anything the input did, and how big that
-    # rounding is depends entirely on the problem's scale. Both filters exist to keep
-    # points that carry no signal out of a fit that would otherwise be dragged by them.
-    t_pts = [(r[1], r[2] - t_base) for r in big if r[2] - t_base >= 3.0]
+    # Points sitting near the floor are jitter, not work. They span decades of x at a
+    # near-constant y, which flattens the slope of even a quadratic solution towards
+    # zero, so they are dropped rather than fitted.
+    #
+    # Both filters are absolute-and-relative, for the same two reasons. The absolute
+    # part is the instrument: a few milliseconds is the clock's own resolution, and a
+    # few MB is an allocator rounding. The relative part is run-to-run variation, which
+    # scales with the runtime and not with the instrument — CPython's startup wanders
+    # by ten-odd milliseconds between runs, so an absolute 3 ms floor on its own admits
+    # a whole suite of fast tests as a band of noise a few ms above t_base. Those then
+    # outnumber the handful of points that did real work and take R² down with them,
+    # which reads as "test shape is costing more than test size" when the truth is that
+    # nothing was being measured. Keep only what is large against the biggest signal.
+    t_sig = [(r[1], r[2] - t_base) for r in big if r[2] > t_base]
+    t_top = max((y for _, y in t_sig), default=0)
+    t_pts = [(x, y) for x, y in t_sig if y >= max(3.0, t_top / 16)]
     m_sig = [(r[1], r[3] - m_base) for r in big if r[3] and r[3] > m_base]
     m_top = max((y for _, y in m_sig), default=0)
     m_pts = [(x, y) for x, y in m_sig if y >= m_top / 16]
@@ -960,7 +992,101 @@ def check_against_samples(c, path, title):
     return bad
 
 
-def selfcheck(c):
+def survives_inputs(c, argv, tests):
+    """Feed every generated input to the real entry file and require it not to die.
+
+    The stub returns a placeholder, so it cannot be scored — but a crash or a hang is
+    unambiguous whatever the algorithm is: whatever it read, it was not what
+    .oa/gen.py wrote. This is the half of the plumbing check that examines the file
+    the user will actually edit, rather than a stand-in for it.
+    """
+    bad = []
+    for name, inp, _ in tests:
+        status, _, err, _, _ = run_once(argv, inp, c["time_limit_ms"])
+        if status in ("RE", "TLE"):
+            bad.append((status, name, err.strip().splitlines()[-1] if err.strip() else status))
+    if not bad:
+        print(f"  {G}OK{X}   {DIM}{c['entry']} reads all {len(tests)} generated inputs "
+              f"without dying{X}")
+        return 0
+    print(f"  {R}BAD{X}  {c['entry']} dies on {len(bad)} of {len(tests)} generated inputs")
+    for status, name, first in bad[:3]:
+        print(f"       {R}{status}{X} {name:<18} {DIM}{first}{X}")
+    print(f"  {DIM}The stub cannot be scored, but it can be made to run: crashing or hanging"
+          f"\n  means it did not read the format .oa/gen.py writes.{X}")
+    return 1
+
+
+def check_plumbing(c, entry):
+    """Does the entry file's I/O agree with the generator and the reference?
+
+    This is the one failure the harness cannot show the user. A main file that reads a
+    different format than .oa/gen.py writes, or prints a different shape than
+    .oa/ref/reference.py, turns every hidden test red at once — and from the user's
+    side that is indistinguishable from a wrong algorithm, on a workspace whose whole
+    promise is that a red test means their code. Nothing else here catches it:
+    selfcheck proves the reference matches the statement, `run` proves the stub builds,
+    and both stay green while the two halves disagree with each other.
+
+    Two halves, because neither is enough alone. Feeding the generated inputs to the
+    real entry catches a wrong *parse* in the file that actually ships. Scoring a
+    known-correct stand-in at 100% catches a wrong *output shape*, which no stub can
+    demonstrate — at the cost of only proving it for the stand-in, so the two together
+    are what make the answer trustworthy.
+    """
+    ins = sorted(HIDDEN.glob("*.in"))
+    if not ins:
+        return 0                       # nothing generated yet; the caller already said so
+
+    print(f"\n{B}Plumbing{X} {DIM}— does {c['entry']}'s I/O match the suite?{X}")
+    bad = survives_inputs(c, build(c), [(f.stem, read(f), None) for f in ins])
+
+    scored = [t for t in samples() + hidden() if t[2] is not None]
+    if entry is None:
+        if not hidden():
+            # Before `answers` there is nothing to score against, and step 7 runs
+            # selfcheck here on purpose — to catch a misread statement before paying
+            # for the slow pass. Not applicable is not the same as unchecked.
+            print(f"  {DIM}output shape not checkable until answers exist — rerun with "
+                  f"--entry after `answers`{X}")
+            return bad
+        print(f"  {R}{B}OUTPUT SHAPE UNCHECKED{X} — nothing has confirmed that {c['entry']} prints\n"
+              f"       the shape .oa/ref/reference.py answers in.")
+        print(f"  {DIM}A mismatch fails every hidden test at once and looks exactly like a wrong\n"
+              f"  algorithm from the user's side, so it is the one failure they cannot debug.\n"
+              f"  Copy {c['entry']} to _check.py, fill in the algorithm, then:\n"
+              f"      python3 oa.py selfcheck --entry _check.py\n"
+              f"  and delete _check.py once it scores 100%.{X}")
+        return bad + 1
+
+    p = (ROOT / entry).resolve()
+    if not p.exists():
+        die(f"--entry {entry}: no such file")
+    try:
+        rel = p.relative_to(ROOT)
+    except ValueError:
+        die(f"--entry {entry}: must live inside the workspace")
+    if rel == Path(c["entry"]):
+        die(f"--entry {entry} is the workspace's own entry file.\n"
+            f"  The point is to score a *known-correct* solution against the suite, and\n"
+            f"  {c['entry']} is the stub the user is meant to fill in.")
+    if not scored:
+        print(f"  {R}nothing to score{X} — no samples and no answers yet")
+        return bad + 1
+
+    print(f"  {DIM}scoring {rel} — a correct solution through the real tests and checker{X}")
+    passed, total, _ = execute(c, build({**c, "entry": str(rel)}), scored, 1, "Plumbing")
+    if passed == total and total:
+        print(f"  {DIM}output shape agrees with the reference, and a correct solution fits the"
+              f"\n  time limit. Delete {rel}.{X}")
+        return bad
+    print(f"\n{R}{B}the workspace is broken, not the solution{X} — a correct solution scored\n"
+          f"  {passed}/{total}. Reconcile {c['entry']}'s parsing and printing against the format\n"
+          f"  .oa/gen.py emits and the shape .oa/ref/reference.py returns, then rerun.")
+    return bad + 1
+
+
+def selfcheck(c, entry=None):
     if not BRUTE.exists():
         die(f"no {BRUTE.relative_to(ROOT)}")
     refuse_template(ROOT / ".oa" / "gen.py")
@@ -1000,6 +1126,7 @@ def selfcheck(c):
             bad += 1
     else:
         print(f"\n{Y}no tests generated yet — run: python3 oa.py gen{X}")
+    bad += check_plumbing(c, entry)
     return 1 if bad else 0
 
 
@@ -1013,11 +1140,20 @@ def main():
                     help="how many failing tests to explain in full "
                          "(default: every sample for run, none for judge)")
     ap.add_argument("--force", action="store_true", help="discard cached tests / answers")
+    ap.add_argument("--entry", help="selfcheck: score this known-correct solution instead "
+                                    "of the stub, to prove the entry file's I/O matches "
+                                    "the generator and the reference")
     a = ap.parse_args()
     c = cfg()
 
     if a.cmd == "gen":
-        generate(c, force=True)
+        # --force is what discards the answer cache; `gen` on its own must not. An
+        # input that comes out byte-identical keeps the answer already computed for
+        # it, so appending a case to gen.py costs one reference run instead of the
+        # whole pass. Forcing here unconditionally took that away from the one command
+        # the workflow tells you to run after every edit, which is precisely where it
+        # was supposed to pay off.
+        generate(c, force=a.force, report=True)
         return
 
     if a.cmd == "answers":
@@ -1026,7 +1162,7 @@ def main():
         return
 
     if a.cmd == "selfcheck":
-        sys.exit(selfcheck(c))
+        sys.exit(selfcheck(c, a.entry))
 
     argv = build(c)
 

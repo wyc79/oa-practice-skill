@@ -295,23 +295,31 @@ Return a reason string; it shows up next to the FAIL line and saves the user a d
 ./judge.sh --force        # discard cached tests and answers first
 ./judge.sh --reveal 1     # ...and explain the first failure after all
 ./oa.sh case t07-max      # rerun one test with full detail
-./oa.sh gen               # rebuild tests/hidden/*.in + boundary coverage (fast)
+./oa.sh gen               # refresh tests/hidden/*.in + boundary coverage (fast)
+./oa.sh gen --force       # ...from scratch, discarding every cached answer
 ./oa.sh answers           # compute the expected outputs (slow, resumable)
-./oa.sh selfcheck         # both references vs samples + coverage — before handing over
+./oa.sh selfcheck         # both references vs samples + coverage + staleness
+./oa.sh selfcheck --entry _check.py   # ...and the plumbing — the last gate before hand-over
 ```
 
 Windows: `.\run.cmd`, `.\judge.cmd`, `.\oa.cmd <cmd>`. All three wrappers forward to
 `oa.py`, which you can also call directly if you already know your interpreter's name.
 
 `tests/hidden/` records what built it in `_stamp.json` — a hash of `.oa/gen.py`, the
-seed, and a hash of each reference — and every command checks it, so an edit you make
-takes effect on the next run instead of being quietly overridden by the cache. Editing
-`gen.py` or changing the seed rebuilds the inputs, keeping the answer to every test
+seed, and a hash of each reference — and every command checks it, so an edit takes
+effect on the next run rather than being quietly overridden by the cache. Editing
+`gen.py` or changing the seed rebuilds the inputs but keeps the answer to every test
 whose input came out byte-identical: appending a case costs one reference run, not the
-suite. Editing either reference discards every answer, because there is no way to know
-which ones it would have changed and keeping answers the current oracle disagrees with
-grades the user against a solution nobody is running. `selfcheck` refuses to pass on a
-stale cache rather than describing tests the next `judge` will replace.
+suite. `--force` is the only thing that discards answers wholesale. Editing a reference
+discards all of them, because there is no knowing which it would have changed, and
+answers the current oracle disagrees with grade the user against a solution nobody is
+running. `selfcheck` refuses to pass on a stale cache.
+
+`selfcheck --entry <file>` is the plumbing gate: it scores `<file>` — a known-correct
+stand-in for the main file — through the real tests and checker and demands 100%, and
+separately feeds every generated input to the real entry and demands it not die.
+Without `--entry` it reports the output shape as unchecked and fails, once there are
+answers to check against. SKILL.md step 7 has why it is not optional.
 
 `--reveal N` explains the first N failures and no more, where "explains" covers the
 one-line reason as well as the input/expected/actual block — `token 0: got '0', want
@@ -345,13 +353,10 @@ Windows spends seconds in the error reporter, so folding either in would print a
 number that appears in none of the rows above it; tests over the limit are counted
 separately instead.
 
-Wrappers: `./run.sh`, `./judge.sh` and `./oa.sh <cmd>` on macOS/Linux; `run.cmd`,
-`judge.cmd` and `oa.cmd <cmd>` on Windows. Each probes for a working Python 3 rather
-than assuming `python3` resolves to one — it does not on Windows, where `python3.exe`
-is usually the Microsoft Store stub and `py` may not exist at all. `oa.sh`/`oa.cmd`
-exist so the authoring commands get the same probe the two buttons get; without them
-`gen`, `answers` and `selfcheck` are the steps that fail on a machine where `run.sh`
-and `judge.sh` are fine. Set `OA_PYTHON` to override.
+Each wrapper probes for a working Python 3 rather than assuming `python3` resolves to
+one — it does not on Windows, where `python3.exe` is usually the Microsoft Store stub
+and `py` may not exist at all. `oa.sh`/`oa.cmd` exist so the authoring commands get the
+same probe the two buttons get. Set `OA_PYTHON` to override.
 
 ## Scaling report
 
@@ -366,33 +371,36 @@ Scaling — largest tests, by input size
   memory ~ n^0.95  (12.3 MB runtime baseline subtracted, R²=0.97)
 ```
 
-Peak memory is exact on Windows and sampled on Linux and macOS (SKILL.md, "Windows and
-macOS", covers what that costs you); anywhere else it is `n/a` rather than a number
-that would quietly mean something else. Both curves have a large constant term
-— process startup, and the runtime's baseline heap — which is subtracted before
-fitting; without that, a perfectly linear solution reads as sub-linear. Points that
-carry no signal are then dropped: for time, anything within 3 ms of the floor, which
-is the clock's own resolution; for memory, anything under a sixteenth of the largest
-reading, since near the baseline the difference is an allocator rounding rather than
-anything the input did.
+Peak memory is exact on Windows and sampled on Linux and macOS; anywhere else it is
+`n/a` rather than a number that would quietly mean something else. Both curves have a
+large constant term — process startup, and the runtime's baseline heap — subtracted
+before fitting, or a perfectly linear solution reads as sub-linear. Points carrying no
+signal are then dropped by two floors: absolute (the clock's own resolution, an
+allocator rounding) and relative (a sixteenth of the largest signal). The relative one
+is what keeps run-to-run jitter out — CPython's startup wanders by ten-odd
+milliseconds, so without it a suite of fast tests enters the fit as a band of noise and
+outnumbers the points that did real work.
 
 What survives is fitted only if the fit means something, and `R²` — the share of the
 variance the exponent explains — is the check that matters. Tests of the same size but
-different *shape* cost visibly different time: a sorted 2 MB input and a random one are
-not two samples of one curve, and a line drawn through them reports a merge sort as
-`n^0.60`. A low `R²` is the report saying exactly that, and it is worth reading as a
-fact about the suite: it usually means the largest tests differ in kind, not in size.
+different *shape* cost visibly different time, so a line drawn through them can report
+a merge sort as `n^0.60`. A fit is declined when too few of the largest tests clear the
+floor, when the ones that do span too little input size, when nothing rises far enough
+to measure, or when `R²` is under 0.9.
 
-So a fit is declined when too few of the largest tests clear the floor, when the ones
-that do span too little input size, when nothing rises far enough above the floor to
-measure, or when `R²` is under 0.9. Each declines with its own sentence — they call for
-different things. "Nothing rose far enough above the floor" on a solution that passed
-comfortably is the expected outcome for anything fast, not a failure. "Span too little
-input size" is a suite problem: widen the geometric ladder. Expect the time estimate to
-be far sharper for C++ (millisecond startup) than for Python (tens of milliseconds of
-it), and expect exponents fitted against input *bytes* to understate: a true O(n²)
-solution reads around `n^1.5`, which is why 1.35 is the threshold for flagging
-"above linear" rather than something nearer 2.
+Each declines with its own sentence, because they call for different things. "Nothing
+rose far enough above the floor" on a solution that passed comfortably is the expected
+outcome for anything fast. "Span too little input size" is a suite problem: widen the
+ladder. A low `R²` on a suite that already has a ladder is neither, and widening will
+not help — the max-stress and joint-corner tests are typically the *largest inputs by
+bytes* and being degenerate is their entire job, so they sit at the top of the ordering
+the fit works from while costing what their shape costs rather than what their size
+implies. To get an exponent out of such a problem, make the ladder itself reach the
+maximum size.
+
+Expect the estimate to be sharper for C++ (millisecond startup) than for Python, and
+expect exponents fitted against input *bytes* to understate: a true O(n²) solution
+reads around `n^1.5`, which is why 1.35 is the threshold for flagging "above linear".
 
 Reference timings recorded during `answers` are shown alongside for scale. They are
 Python, so treat the ratio as a sanity check rather than a benchmark.
