@@ -22,8 +22,16 @@ actually hit the intended complexity.
 
 ## Install
 
-The skill lives in [`oa-practice/`](oa-practice/); everything beside it is repo
-scaffolding. Clone, then copy that one directory into your skills folder:
+```sh
+npx skills add wyc79/oa-practice-skill
+```
+
+That finds the skill in [`oa-practice/`](oa-practice/) and installs it to
+`~/.claude/skills/`. Add `--list` to look before installing, or `-a claude-code` to
+pin the target agent.
+
+By hand instead — clone and copy that one directory, since everything beside it is
+repo scaffolding:
 
 ```sh
 git clone https://github.com/wyc79/oa-practice-skill
