@@ -1,4 +1,30 @@
+// <bits/stdc++.h> is a libstdc++ extension: it exists for GCC (and so on most
+// judges), but Apple clang ships libc++ and does not have it. Keep the convenience
+// where it is available and fall back to the real headers where it is not.
+#if __has_include(<bits/stdc++.h>)
 #include <bits/stdc++.h>
+#else
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <deque>
+#include <functional>
+#include <iostream>
+#include <map>
+#include <numeric>
+#include <queue>
+#include <set>
+#include <sstream>
+#include <string>
+#include <tuple>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+#endif
 using namespace std;
 
 /* ============================================================

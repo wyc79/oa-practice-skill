@@ -40,11 +40,14 @@ G = "\033[32m"; R = "\033[31m"; Y = "\033[33m"; DIM = "\033[2m"; B = "\033[1m"; 
 if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
     G = R = Y = DIM = B = X = ""
 
-# A console on a non-UTF-8 codepage (cp936, cp1252, …) raises on the box-drawing and
-# dash characters below rather than printing them. Degrade the glyph, never the run.
+# Windows renders a real console through WriteConsoleW, so the dashes below survive
+# there whatever the codepage — but redirect the output and Python falls back to the
+# locale encoding, where cp936/cp1252 turn every "—" into "??" or raise outright.
+# Pin UTF-8 on both streams, and keep errors="replace" so a stray glyph can never be
+# the thing that kills a judge run.
 try:
-    sys.stdout.reconfigure(errors="replace")
-    sys.stderr.reconfigure(errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except (AttributeError, ValueError):
     pass
 
@@ -58,7 +61,20 @@ def read(path):
 
 
 def write(path, text):
-    Path(path).write_text(text, **UTF8)
+    """Always LF. The default translates "\\n" to os.linesep, which would make the
+    same seed produce byte-different test files on Windows than on macOS/Linux."""
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+
+
+def decode(b):
+    """Child output back to text. Text-mode pipes would do this for us, but they
+    also rewrite stdin on the way in (see run_once), so we do both ends by hand."""
+    return b.decode("utf-8", "replace").replace("\r\n", "\n") if b else ""
+
+
+def plat():
+    return "windows" if os.name == "nt" else ("macos" if sys.platform == "darwin" else "linux")
 
 
 def cfg():
@@ -93,6 +109,39 @@ def load_module(path, name):
 
 
 # ---------------------------------------------------------------- build / run
+# Toolchain names differ per platform and none of them are guaranteed: macOS ships
+# clang++ (often as g++), Windows ships neither until you install one. Look for what
+# is actually there and, when nothing is, say how to get it — a bare "g++ not found"
+# leaves the user to guess which of several answers applies to their machine.
+
+CXX = ("g++", "clang++", "c++")
+
+HINTS = {
+    "c++ compiler": {
+        "windows": "install MSYS2, then `pacman -S mingw-w64-ucrt-x86_64-gcc` and put\n"
+                   "  its ucrt64/bin on PATH — or set \"language\": \"python\" in problem.json",
+        "macos": "run `xcode-select --install`",
+        "linux": "install build-essential (Debian/Ubuntu) or gcc-c++ (Fedora)",
+    },
+}
+
+
+def need_tool(names, what):
+    for n in names:
+        if shutil.which(n):
+            return n
+    die(f"no {what} on PATH (looked for {', '.join(names)})\n"
+        f"  {HINTS[what][plat()]}")
+
+
+def compile_with(cmd):
+    p = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    if p.returncode != 0:
+        print(f"{R}{B}Compile error{X}\n{p.stderr}")
+        sys.exit(2)
+    if p.stderr.strip():
+        print(f"{Y}{p.stderr.strip()}{X}")
+
 
 def build(c):
     """Compile if needed. Returns the argv used to run the solution."""
@@ -108,24 +157,16 @@ def build(c):
         return c["run_cmd"] if isinstance(c["run_cmd"], list) else c["run_cmd"].split()
 
     if lang == "cpp":
-        exe = BUILD / "main"
-        cmd = ["g++", "-std=c++17", "-O2", "-pipe", "-o", str(exe), str(entry)]
-        p = subprocess.run(cmd, capture_output=True, text=True)
-        if p.returncode != 0:
-            print(f"{R}{B}Compile error{X}\n{p.stderr}")
-            sys.exit(2)
-        if p.stderr.strip():
-            print(f"{Y}{p.stderr.strip()}{X}")
+        # Name the .exe explicitly on Windows: MinGW's linker appends .exe to a
+        # suffixless -o anyway, and CreateProcess will not find the file without it.
+        exe = BUILD / ("main.exe" if os.name == "nt" else "main")
+        compile_with([need_tool(CXX, "c++ compiler"), "-std=c++17", "-O2", "-pipe",
+                      "-o", str(exe), str(entry)])
         return [str(exe)]
     if lang == "python":
         return [sys.executable, str(entry)]
-    if lang == "java":
-        p = subprocess.run(["javac", "-d", str(BUILD), str(entry)], capture_output=True, text=True)
-        if p.returncode != 0:
-            print(f"{R}{B}Compile error{X}\n{p.stderr}")
-            sys.exit(2)
-        return ["java", "-cp", str(BUILD), entry.stem]
-    die(f"unknown language {lang!r}; set run_cmd in problem.json instead")
+    die(f"unsupported language {lang!r} — built-in support is cpp and python.\n"
+        f"  Anything else runs through build_cmd / run_cmd in problem.json.")
 
 
 def sh(cmd, what):
@@ -142,8 +183,11 @@ def die(msg):
 
 # ------------------------------------------------------------- peak memory
 # Windows reads the kernel's own peak working set, which is exact and free.
-# Linux samples /proc while the child runs. Everywhere else reports n/a rather
-# than a number that would quietly mean something different.
+# Linux and macOS sample the running child instead — the kernel discards the true
+# high-water mark the moment the process exits, and neither exposes it per-child
+# through subprocess. Sampling can undershoot on a very short run; it never
+# overshoots. Anywhere else reports n/a rather than a number that would quietly
+# mean something different.
 
 def _peak_windows(proc):
     import ctypes
@@ -166,36 +210,75 @@ def _peak_windows(proc):
     return c.PeakWorkingSetSize if ok else None
 
 
-class _LinuxSampler(threading.Thread):
+class _Sampler(threading.Thread):
+    def __init__(self, pid, interval):
+        super().__init__(daemon=True)
+        self.pid, self.interval, self.peak, self.stop = pid, interval, 0, False
+
+    def run(self):
+        while not self.stop:
+            b = self.sample()
+            if b is None:
+                return
+            self.peak = max(self.peak, b)
+            time.sleep(self.interval)
+
+
+class _LinuxSampler(_Sampler):
     """Poll /proc/<pid>/statm; the kernel drops VmHWM the moment the process exits."""
 
     def __init__(self, pid):
-        super().__init__(daemon=True)
-        self.pid, self.peak, self.stop = pid, 0, False
+        super().__init__(pid, 0.002)
+        self.page = os.sysconf("SC_PAGE_SIZE")
+        self.path = f"/proc/{pid}/statm"
 
-    def run(self):
-        page = os.sysconf("SC_PAGE_SIZE")
-        path = f"/proc/{self.pid}/statm"
-        while not self.stop:
-            try:
-                with open(path) as f:
-                    self.peak = max(self.peak, int(f.read().split()[1]) * page)
-            except (OSError, IndexError, ValueError):
-                return
-            time.sleep(0.002)
+    def sample(self):
+        try:
+            with open(self.path) as f:
+                return int(f.read().split()[1]) * self.page
+        except (OSError, IndexError, ValueError):
+            return None
+
+
+class _MacSampler(_Sampler):
+    """macOS has no /proc, so shell out to ps. Each sample costs a fork, hence the
+    coarser interval — a test that finishes in a few ms may go unsampled entirely."""
+
+    def __init__(self, pid):
+        super().__init__(pid, 0.01)
+
+    def sample(self):
+        try:
+            out = subprocess.run(["ps", "-o", "rss=", "-p", str(self.pid)],
+                                 capture_output=True, text=True, timeout=1).stdout.strip()
+            return int(out) * 1024 if out else None
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+
+
+def sampler_for(pid):
+    if sys.platform.startswith("linux"):
+        return _LinuxSampler(pid)
+    if sys.platform == "darwin":
+        return _MacSampler(pid)
+    return None
 
 
 def run_once(argv, data, limit_ms):
-    """Run the solution once. Returns (status, stdout, stderr, ms, peak_bytes|None)."""
+    """Run the solution once. Returns (status, stdout, stderr, ms, peak_bytes|None).
+
+    Binary pipes, decoded by hand: a text-mode stdin translates "\\n" to os.linesep,
+    so on Windows every solution would be fed CRLF and any getline() would come back
+    with a trailing "\\r".
+    """
     t0 = time.perf_counter()
     p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, text=True)
-    sampler = None
-    if sys.platform.startswith("linux"):
-        sampler = _LinuxSampler(p.pid)
+                         stderr=subprocess.PIPE)
+    sampler = sampler_for(p.pid)
+    if sampler:
         sampler.start()
     try:
-        out, err = p.communicate(data, timeout=max(limit_ms / 1000.0 * 3 + 1, 5))
+        out, err = p.communicate(data.encode("utf-8"), timeout=max(limit_ms / 1000.0 * 3 + 1, 5))
         timed_out = False
     except subprocess.TimeoutExpired:
         p.kill()
@@ -206,6 +289,7 @@ def run_once(argv, data, limit_ms):
         sampler.stop = True
         sampler.join(0.05)
     mem = _peak_windows(p) if os.name == "nt" else (sampler.peak or None if sampler else None)
+    out, err = decode(out), decode(err)
 
     if timed_out:
         return "TLE", "", "", limit_ms * 3, mem
@@ -325,7 +409,12 @@ def check_limits(gen_mod, tests):
             print(f"  {k:<{w}}  {span:<{sw}}  {DIM}{at}{X}  {G}OK{X}{tag}")
 
     corner_keys = {k for k, e in lim.items() if not bounds(e)[2]}
-    corner = next((n for n, _ in tests if corner_keys <= tops[n]), None)
+    # Several tests can attain every upper bound while differing in how much else they
+    # max out. Report the most saturated one: naming the first would flag a purpose-built
+    # saturated corner as "not saturated" whenever any earlier test also qualified.
+    cands = [n for n, _ in tests if corner_keys <= tops[n]]
+    corner = min(cands, key=lambda n: sum(
+        1 for k, (vmin, _) in spread[n].items() if vmin != bounds(lim[k])[1])) if cands else None
     if corner is None:
         ok = False
         print(f"  {'joint max corner':<{w}}  {R}MISSING{X}  "
@@ -333,10 +422,14 @@ def check_limits(gen_mod, tests):
     else:
         print(f"  {'joint max corner':<{w}}  {corner:<{sw}}  {G}OK{X}")
         for k, (vmin, vmax) in spread[corner].items():
-            hi = bounds(lim[k])[1]
-            if vmin != hi:
-                print(f"  {Y}hint{X} {corner} has {k} in [{vmin}, {vmax}], not saturated at {hi}"
-                      f"  {DIM}— saturate it if the problem allows{X}")
+            _, hi, exempt_k = bounds(lim[k])
+            # A no-corner key is one the problem cannot max alongside the others.
+            # Nagging that it is unsaturated is the same complaint the exemption
+            # already answered, and there is no edit that would silence it.
+            if exempt_k or vmin == hi:
+                continue
+            print(f"  {Y}hint{X} {corner} has {k} in [{vmin}, {vmax}], not saturated at {hi}"
+                  f"  {DIM}— saturate it if the problem allows{X}")
 
     for name, k, val, lo, hi in bad[:10]:
         ok = False
@@ -357,6 +450,19 @@ def samples():
     return out
 
 
+TEMPLATE_MARK = re.compile(r"^TEMPLATE\s*=\s*True", re.M)
+
+
+def refuse_template(path):
+    """The scaffold ships a complete worked example, not a stub. Left alone it
+    generates tests, passes its own coverage check and scores a solution — for a
+    problem nobody asked about. So it carries a marker, and nothing runs until the
+    marker is gone."""
+    if path.exists() and TEMPLATE_MARK.search(read(path)):
+        die(f"{path.relative_to(ROOT)} is still the scaffold example (sum an array).\n"
+            f"  Rewrite it for this problem, then delete its `TEMPLATE = True` line.")
+
+
 def case_name(i, label):
     if not label:
         return f"t{i:02d}"
@@ -366,6 +472,7 @@ def case_name(i, label):
 
 def generate(c, force=False):
     """Write tests/hidden/*.in from .oa/gen.py, then check boundary coverage."""
+    refuse_template(ROOT / ".oa" / "gen.py")
     gen = load_module(ROOT / ".oa" / "gen.py", "oa_gen")
     if gen is None:
         die("need .oa/gen.py to judge")
@@ -396,14 +503,14 @@ def run_reference(path, data, limit_ms):
     argv = [sys.executable, str(RUNNER), str(path)]
     t0 = time.perf_counter()
     try:
-        p = subprocess.run(argv, input=data, capture_output=True, text=True,
+        p = subprocess.run(argv, input=data.encode("utf-8"), capture_output=True,
                            timeout=limit_ms / 1000.0)
     except subprocess.TimeoutExpired:
         return "TLE", "", "", (time.perf_counter() - t0) * 1000
     ms = (time.perf_counter() - t0) * 1000
     if p.returncode != 0:
-        return "RE", "", p.stderr.strip(), ms
-    return "OK", p.stdout, "", ms
+        return "RE", "", decode(p.stderr).strip(), ms
+    return "OK", decode(p.stdout), "", ms
 
 
 def answers(c, force=False):
@@ -414,6 +521,7 @@ def answers(c, force=False):
         die("no test inputs — run: python3 oa.py gen")
     if not BRUTE.exists():
         die(f"missing {BRUTE.relative_to(ROOT)}")
+    refuse_template(BRUTE)
     limit = c["ref_time_limit_ms"]
     todo = [f for f in ins if force or not f.with_suffix(".out").exists()]
     if not todo:
@@ -590,6 +698,10 @@ def complexity_report(c, stats):
 
 
 def execute(c, argv, tests, reveal, label):
+    """reveal caps how many failures are explained. It has to cap the one-line
+    reason too, not just the input/expected/actual block: "token 0: got '0', want
+    '200000000000000'" hands over the answer, and --reveal 0 is meant to be the
+    real thing — a score and nothing else."""
     passed = 0
     shown = 0
     slowest = 0.0
@@ -605,8 +717,9 @@ def execute(c, argv, tests, reveal, label):
                 passed += 1
                 print(f"  {G}PASS{X} {name:<18} {used}")
                 continue
-            print(f"  {R}FAIL{X} {name:<18} {used}  {DIM}{why}{X}")
-            if shown < reveal:
+            explain = shown < reveal
+            print(f"  {R}FAIL{X} {name:<18} {used}{f'  {DIM}{why}{X}' if explain else ''}")
+            if explain:
                 show_failure(name, inp, exp, out, why)
                 shown += 1
         elif status == "TLE":
@@ -632,12 +745,13 @@ def check_against_samples(c, path, title):
     the harness did not produce itself.
     """
     ref = load_module(path, f"oa_ref_{title}")
-    bad = 0
+    bad = checked = 0
     print(f"\n{B}{title} vs samples{X}")
     for name, inp, exp in samples():
         if exp is None:
             print(f"  {Y}SKIP{X} {name} (no .out file)")
             continue
+        checked += 1
         try:
             got = str(ref.solve(inp)).rstrip("\n") + "\n"
         except Exception as e:
@@ -649,13 +763,23 @@ def check_against_samples(c, path, title):
         if not ok:
             show_failure(name, inp, exp, got, why)
             bad += 1
-    print(f"  {(R + B + 'MISMATCH') if bad else (G + B + 'consistent')}{X}")
+    if not checked:
+        # "consistent" over zero comparisons is the most dangerous output this
+        # harness could print: it is the green light on the one check that catches
+        # a misread statement, and a fresh scaffold is exactly this state.
+        print(f"  {R}{B}NOTHING TO CHECK{X} — no tests/samples/*.in with a matching .out")
+        print(f"  {DIM}Copy the statement's examples in verbatim first. Until then nothing"
+              f"\n  has ever compared {title} against ground truth.{X}")
+        return 1
+    print(f"  {(R + B + 'MISMATCH') if bad else (G + B + 'consistent')}{X} {DIM}({checked} samples){X}")
     return bad
 
 
 def selfcheck(c):
     if not BRUTE.exists():
         die(f"no {BRUTE.relative_to(ROOT)}")
+    refuse_template(ROOT / ".oa" / "gen.py")
+    refuse_template(BRUTE)
     bad = check_against_samples(c, BRUTE, "reference")
     if FAST.exists():
         bad += check_against_samples(c, FAST, "reference_fast")

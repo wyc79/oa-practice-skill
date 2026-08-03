@@ -1,12 +1,14 @@
 ---
 name: oa-practice
-description: Turn any coding-assessment problem into a local, runnable OA workspace — parsed I/O main file, sample tests with a one-click runner, and a hidden judge that scores the user's solution on ~20+ generated tests as a pass percentage. Use this whenever the user pastes a problem statement with sample input/output and wants to solve it themselves, or mentions OA, online assessment, 笔试, 机考, take-home coding test, HackerRank/Codility/牛客/Codeforces-style problems, or says a problem "isn't on LeetCode" so there's nothing to run their code against. Trigger even for casual asks like "set this one up for me", "make me a test harness for this", "I want to practice this problem", or when they drop a screenshot/paste of a problem with constraints and examples. The user writes the algorithm; this skill builds everything around it and never fills in the solution unless asked.
+description: Use when the user has a coding-assessment problem they want to solve themselves rather than be handed — a pasted or screenshotted statement with constraints and sample I/O, or any mention of OA, online assessment, 笔试, 机考, take-home coding test, HackerRank/Codility/牛客/Codeforces-style problems, or a problem that "isn't on LeetCode" so there is nothing to run their code against. Also for "set this one up for me", "make me a test harness for this", "I want to practice this problem".
 ---
 
 # OA Practice Harness
 
 The user wants the OA experience for a problem that has no online judge: write code,
-hit run on the samples, hit submit, get a score. This skill builds that workspace.
+hit run on the samples, hit submit, get a score. This skill builds that workspace:
+a main file with the I/O already parsed, the statement's samples behind a one-click
+runner, and a hidden judge that scores their solution on 20+ generated tests.
 
 The one rule that makes the whole thing worth doing: **never write the solution.**
 The `solve()` body stays a `// TODO`. Everything else — parsing, printing, samples,
@@ -17,11 +19,11 @@ answer, that is a separate request and fine to fulfill.
 
 ```
 <slug>/
-├── main.cpp            # I/O parsed and printed; solve() is a stub for the user
+├── main.cpp / main.py  # I/O parsed and printed; solve() is a stub for the user
 ├── problem.json        # language, time limit, checker mode
 ├── README.md           # restated statement, constraints, complexity target
-├── run.sh              # ./run.sh   → samples only, with diffs      ("Run Code")
-├── judge.sh            # ./judge.sh → all tests, prints k/n (p%)     ("Submit")
+├── run.sh, run.cmd     # samples only, with diffs                    ("Run Code")
+├── judge.sh, judge.cmd # all tests, prints k/n (p%)                   ("Submit")
 ├── oa.py               # harness engine (run / judge / gen / answers / case / selfcheck)
 ├── tests/samples/      # sample1.in, sample1.out, sample2.in, ...
 └── .oa/
@@ -32,9 +34,12 @@ answer, that is a separate request and fine to fulfill.
         └── reference_fast.py  # intended algorithm; only when brute can't reach the limits
 ```
 
-The hidden tests are not shipped as files — `.oa/gen.py` produces the inputs and
-`.oa/ref/reference.py` produces the expected outputs, deterministically from a seed.
-That is what makes a 20+ test suite cheap to build and impossible to hardcode against.
+Nothing ships the tests themselves — `.oa/gen.py` produces the inputs and
+`.oa/ref/reference.py` the expected outputs, deterministically from a seed. That is
+what makes a 20+ test suite cheap to build and reproducible. Be straight with the user
+about what "hidden" means here: once generated they sit in `tests/hidden/`, so this is
+honour-system, not sealed. `judge --reveal 0` is the strict mode — a score and nothing
+else, no diffs and no expected values.
 
 ## Workflow
 
@@ -55,14 +60,35 @@ token by token against the prose. Ask the user only about what genuinely isn't t
 python3 <skill>/scripts/scaffold.py <slug> --dir <dest> --lang cpp --tl 3000
 ```
 
-Default to C++17. Time limit: 3000 ms unless the statement says otherwise; tighten to
-1000–2000 ms when the point of the problem is that the naive approach is too slow.
+(`python3` throughout this file means whatever the local Python 3 is — often `py` on
+Windows, sometimes only an absolute path into a conda or framework install. The
+`run`/`judge` wrappers probe PATH and then fall back to the interpreter that ran
+`scaffold.py`, recorded in `.oa/python-path`, so they keep working on machines where
+`python3.exe` is only a Microsoft Store stub and `py` was never installed. If one
+still exits 127, set `OA_PYTHON`.)
 
-### 3. Write `main.cpp` — plumbing only
+Default to C++17 — but check for a compiler first, because a workspace that cannot
+build is worse than a Python one. macOS has `clang++` only after `xcode-select
+--install`; Windows has nothing until MSYS2 or similar is installed. If there is no
+`g++`/`clang++` on PATH, scaffold `--lang python` and say why.
+
+Time limit: 3000 ms unless the statement says otherwise; tighten to 1000–2000 ms when
+the point of the problem is that the naive approach is too slow. Those numbers assume
+C++. If you fell back to Python, re-derive them — the interpreter adds ~30–50 ms of
+startup and a large constant factor, so a limit that cleanly separates O(n log n) from
+O(n²) in C++ can end up failing both.
+
+The scaffold also drops in a README skeleton to fill in as you go, and `.oa/gen.py` +
+`.oa/ref/reference.py` as a **worked example for a different problem**, each carrying
+a `TEMPLATE = True` line. The harness refuses to run until you have rewritten them and
+deleted that line — left alone they generate a clean, green, entirely wrong suite,
+which is the failure this whole design exists to prevent.
+
+### 3. Write the main file — plumbing only
 
 Parse into clean types, call `solve()`, print. The user should be able to write the
-algorithm without ever thinking about `cin`. Keep the stub honest — a `return 0;`
-placeholder that fails the samples is correct behaviour, not a bug.
+algorithm without ever thinking about `cin` or `sys.stdin`. Keep the stub honest — a
+`return 0;` placeholder that fails the samples is correct behaviour, not a bug.
 
 See `references/authoring.md` for parsing patterns (graphs, grids, multi-test, queries)
 and stub shapes.
@@ -75,23 +101,29 @@ Verbatim matters: a "corrected" sample hides a misreading of the statement.
 ### 5. `.oa/ref/reference.py` — the brute force
 
 `solve(data: str) -> str` takes the whole input file, returns the whole output.
+Rewrite the scaffold's body and delete its `TEMPLATE = True` line.
 Write the dumbest correct thing: exponential enumeration, O(n³) DP, simulation.
 Its only job is to disagree with the user when the user is wrong, so clarity beats
 speed. `oa.py answers` gives it `ref_time_limit_ms` per test (default 120 s) and
 caches every answer, so slow is genuinely fine — at that budget an O(n²) Python brute
 force reaches n ≈ 3000 and anything cheaper reaches the real limits.
 
+Tune that budget down, not just up. It is spent in full on every test the brute force
+cannot finish *before* `reference_fast` is tried, so five hopeless tests at the default
+is ten minutes of dead waiting during step 7. Time the brute force on your largest few
+cases and set `ref_time_limit_ms` a little past what it can actually manage.
+
 If it still can't answer the largest generated case, add `.oa/ref/reference_fast.py`
-with the intended algorithm. It answers only the tests the brute force times out on,
-and the harness runs both on every test the brute force *can* finish and fails if they
-ever disagree — so the shortcut is validated everywhere it's checkable before it is
-trusted anywhere it isn't. Never write only a fast reference: with nothing to
-cross-check against, a wrong one silently sets wrong answers on the hardest tests.
+with the intended algorithm — the harness cross-checks the two wherever the brute force
+finishes, and only trusts the fast one past that point. Never write only a fast
+reference: with nothing to cross-check against, a wrong one silently sets wrong answers
+on exactly the tests that matter most. Mechanics in `references/authoring.md`.
 
 ### 6. `.oa/gen.py` — the test suite
 
 **Transcribe the constraint line first**, before writing a single case. It becomes
-`LIMITS`, and `measure()` reads those same quantities back off a generated input:
+`LIMITS`, and `measure()` reads those same quantities back off a generated input.
+Delete the scaffold's `TEMPLATE = True` line once this file is yours:
 
 ```python
 # 0 <= n <= 2*10^5
@@ -112,7 +144,8 @@ multi-test file, `n*m` for grids, `T`, alphabet size — those are the ones that
 skipped. Boundaries are now mechanical; what still takes judgement is everything else.
 
 `cases(rng)` yields input strings, or `(label, data)` pairs so a failure reads
-`FAIL t01-nzero`. Aim for **22–30 tests**:
+`FAIL t01-nzero`. Aim for **22–30 hidden tests** — the statement's samples are judged
+on top of these, so the score the user sees is a little higher than that:
 
 1. **Shape edges** (~6–10, hand-written): all-equal, already-sorted and reverse-sorted, duplicates, disconnected graph, answer-is-zero, answer-is-the-whole-input. No bound declaration can express these.
 2. **Small randoms** (~8–10): sizes 1–8 with a tiny value range, so collisions and duplicates happen constantly. These catch the most bugs per byte — with the brute force as an oracle this is effectively random differential testing.
@@ -130,10 +163,18 @@ python3 oa.py answers                  # the slow pass; resumable, cached
 ./run.sh                               # stub must compile and fail loudly
 ```
 
+Run that last one through the wrapper, not `oa.py` directly — it is the only step that
+proves the button the user will actually press works on this machine. On Windows use
+`.\run.cmd`. If it exits 127 the interpreter probe came up empty; set `OA_PYTHON` and
+say so in the README.
+
 `selfcheck` failing means the statement was misread. Fix it there — otherwise the user
 spends an hour debugging correct code against a wrong oracle, which is the single worst
 failure mode of this whole setup. It is also the only place either reference meets
-ground truth the harness did not produce itself, so it covers the fast one too.
+ground truth the harness did not produce itself, so it covers the fast one too. Step 4
+is a prerequisite, not an ordering preference: with `tests/samples/` empty there is
+nothing to check against, and `selfcheck` fails rather than reporting a green it cannot
+justify.
 
 Optionally sanity-check the judge by pointing `entry` at a throwaway correct solution,
 confirming 100%, then deleting it. Do this when the I/O format is at all unusual.
@@ -143,12 +184,17 @@ confirming 100%, then deleting it. Do this when the I/O format is at all unusual
 Present the folder and keep it short:
 
 ```
-./run.sh      # samples
-./judge.sh    # submit — scores you on 24 tests
+./run.sh      # samples                          (Windows: .\run.cmd)
+./judge.sh    # submit — scores you on 24 tests   (Windows: .\judge.cmd)
 ```
 
+The `.\` matters: neither PowerShell nor `cmd /c` will run a batch file from the
+current directory without it.
+
 Mention the time limit, the complexity target if the constraints imply one, and that
-`.oa/` contains spoilers. Worth one line: a passing `judge` also prints a scaling
+both `.oa/` and `tests/hidden/*.out` will spoil them — the first holds the algorithm,
+the second the answers. If they want it strict, `judge --reveal 0` prints the score
+and nothing else — no diffs, no expected values. Worth one line: a passing `judge` also prints a scaling
 report — measured time and peak memory against input size, with a fitted growth
 exponent — so they can see whether they hit the intended complexity rather than just
 squeaking under the limit. Then get out of the way.
@@ -162,6 +208,20 @@ against the input and compare its *score* to the reference's — never string-co
 
 **Interactive / stateful problems**: out of scope for the harness as-is. Say so and
 offer a fixed-transcript approximation instead.
+
+**Windows and macOS** both work, and a workspace built on one behaves identically on
+the other — tests are written LF-only and fed to the solution as LF, so a `getline`
+never sees a stray `\r`. Three caveats:
+
+- `run.cmd` / `judge.cmd` are the entry points on Windows; the `.sh` ones need Git Bash
+  or WSL. Invoke them as `.\run.cmd`.
+- **`run.cmd` and `judge.cmd` are CRLF on purpose — never normalize them.** cmd.exe
+  seeks through a batch file as it runs, and an LF-only one with a `for` block and a
+  `goto` inside jumps to the wrong offset and executes fragments of its own source.
+  The LF rule above is about test data and Python; batch files are the exception, and
+  `.gitattributes` pins them.
+- Peak memory is exact on Windows but sampled on macOS and Linux, so a test finishing
+  in a few milliseconds may report low or `n/a`.
 
 **Very large inputs** (10⁶+ numbers): `oa.py gen` writes the inputs quickly; the slow
 part is `oa.py answers`, which is a separate command for exactly that reason. It writes

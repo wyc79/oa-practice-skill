@@ -10,7 +10,7 @@ Contents: [problem.json](#problemjson) · [main file patterns](#main-file-patter
 | field | meaning |
 |---|---|
 | `name` | slug, shown in judge output |
-| `language` | `cpp` \| `python` \| `java`, or omit and use `run_cmd` |
+| `language` | `cpp` or `python` — anything else goes through `run_cmd` |
 | `entry` | source file the user edits |
 | `time_limit_ms` | per test; TLE verdict above this |
 | `checker` | `token` (default, whitespace-insensitive) \| `exact` \| `float` \| `custom` |
@@ -19,9 +19,14 @@ Contents: [problem.json](#problemjson) · [main file patterns](#main-file-patter
 | `ref_time_limit_ms` | per-test budget for the reference during `answers` (default 120000) |
 | `build_cmd` / `run_cmd` | escape hatch for any other language |
 
-Rust example:
+C++ and Python are the two the harness compiles and launches itself. Anything else is
+a pair of commands — no stub is shipped, so write the main file by hand:
 
 ```json
+{ "entry": "Main.java",
+  "build_cmd": "javac -d .oa/build Main.java",
+  "run_cmd": ["java", "-cp", ".oa/build", "Main"] }
+
 { "entry": "main.rs",
   "build_cmd": "rustc -O -o .oa/build/main main.rs",
   "run_cmd": [".oa/build/main"] }
@@ -77,22 +82,7 @@ public:
 
 ## Constraint boundaries
 
-`.oa/gen.py` declares the statement's limits as data, and the harness checks the suite
-actually reaches them. Transcribe the constraint line into a comment first — a
-misreading is then visible on the page rather than buried in a generator loop.
-
-```python
-# 0 <= n <= 2*10^5
-# -10^9 <= a[i] <= 10^9
-LIMITS = {"n": (0, 200000), "a_i": (-10**9, 10**9)}
-
-
-def measure(data):
-    """Read the declared quantities back off a generated input."""
-    t = data.split()
-    n = int(t[0])
-    return {"n": n, "a_i": [int(x) for x in t[1:1 + n]]}
-```
+SKILL.md step 6 has the shape of `LIMITS` and `measure`. What it does not have:
 
 Each value is a scalar or a list; a list contributes its own min and max. A key may be
 absent when it does not apply — an `n = 0` input has no `a_i`, and that is fine.
@@ -119,8 +109,12 @@ are the limits that get skipped:
 `n*m <= 10^6` — means no input can max both, so the joint corner is unsatisfiable as
 stated. Mark those keys `(lo, hi, "no-corner")` to drop them from the corner
 requirement, and declare the derived key so the real limit is still enforced
-somewhere. Endpoint coverage still applies to each, and the coverage table prints
-which keys were exempted.
+somewhere. Endpoint coverage still applies to each, the coverage table prints which
+keys were exempted, and the saturation hint skips them too — nagging that an
+unsaturable key is unsaturated is the complaint the exemption already answered.
+
+Where several tests attain every upper bound, the corner check reports the most
+saturated one, not the first.
 
 The catch: under a shared budget the *effective* max of each variable is lower than
 the number in the statement. With `1 <= n, m` and `n + m <= 100`, the statement may
@@ -164,7 +158,15 @@ def measure(data):
 ## Reference solutions
 
 `solve(data: str) -> str`, whole input in, whole output out. Correct and obvious beats
-fast. Useful shapes:
+fast.
+
+The scaffold ships this file and `.oa/gen.py` as a worked example for a different
+problem, each with a `TEMPLATE = True` line. `gen`, `answers` and `selfcheck` all
+refuse to run while that line is present — an example generator paired with an example
+reference produces a suite that passes every check and grades the wrong problem, so it
+fails closed rather than quietly.
+
+Useful shapes:
 
 - **Enumerate everything**: `itertools.permutations` / `combinations` / bitmask over subsets — fine when the generator keeps n ≤ 10.
 - **Simulate literally**: follow the statement operation by operation.
@@ -176,11 +178,10 @@ Raise `sys.setrecursionlimit(1 << 25)` for deep recursion. Return a string (or a
 
 ### Two tiers
 
-`oa.py answers` runs `ref/reference.py` in a subprocess with a `ref_time_limit_ms`
-budget (default 120 s) and caches each answer as it lands. Slow is fine; only *hopeless*
-is a problem. At that budget an O(n²) Python brute force reaches n ≈ 3000.
-
-Beyond that, add `ref/reference_fast.py` with the intended algorithm:
+`oa.py answers` runs `ref/reference.py` in a subprocess under `ref_time_limit_ms` and
+caches each answer as it lands, so slow is fine and only *hopeless* is a problem.
+Beyond what that budget reaches, add `ref/reference_fast.py` with the intended
+algorithm:
 
 - The brute force answers every test it can finish, and stays the oracle.
 - The fast one answers only the tests the brute force times out on.
@@ -190,8 +191,7 @@ Beyond that, add `ref/reference_fast.py` with the intended algorithm:
 - `oa.py selfcheck` checks both against the statement's samples. That is the only
   ground truth the harness did not generate itself, so neither reference skips it.
 
-Never ship a fast reference alone. With nothing to cross-check against it silently
-defines the expected answer on exactly the max-bound tests that matter most.
+Never ship a fast reference alone — see SKILL.md step 5 for why.
 
 If even a fast reference is impractical, lower the bound in `LIMITS` and say so in the
 README. There is no waiver flag on purpose: a shrunken bound is a visible edit, while a
@@ -199,10 +199,8 @@ config toggle reads as covered when it is not.
 
 ## Generator recipes
 
-`cases(rng)` yields input strings, or `(label, data)` pairs — the label lands in the
-test name, so a failure reads `FAIL t01-nzero` instead of `FAIL t01`. Keep labels
-short; the user types them into `oa.py case`. Only use `rng`. Order: boundary → shape
-→ small random → size ladder → max stress and the joint corner.
+Keep labels short — the user types them into `oa.py case`. Order the suite: boundary →
+shape → small random → size ladder → max stress and the joint corner.
 
 **Array**
 
@@ -238,9 +236,7 @@ statement requires it.
 **Weighted**: keep weights small in random tests (collisions), then one max-weight case
 to catch overflow.
 
-**Size ladder**: a geometric run of sizes — 1000, 4000, 16000, … — so the scaling
-report after a passing `judge` has something to fit. Without spread it declines to
-estimate rather than guessing, which is correct but less useful.
+**Size ladder**: a geometric run of sizes, up to the limit.
 
 ```python
 n = 1000
@@ -288,16 +284,26 @@ Return a reason string; it shows up next to the FAIL line and saves the user a d
 python3 oa.py run              # samples only, prints diffs
 python3 oa.py judge            # samples + hidden, prints Score: k/n (p%)
 python3 oa.py judge --force    # discard cached tests and answers first
-python3 oa.py judge --reveal 0 # score only, no diffs — true OA mode
+python3 oa.py judge --reveal 0 # score only — true OA mode
 python3 oa.py case t07-max     # rerun one test with full detail
 python3 oa.py gen              # rebuild tests/hidden/*.in + boundary coverage (fast)
 python3 oa.py answers          # compute the expected outputs (slow, resumable)
 python3 oa.py selfcheck        # both references vs samples + coverage — before handing over
 ```
 
+`--reveal N` explains the first N failures and no more, where "explains" covers the
+one-line reason as well as the input/expected/actual block — `token 0: got '0', want
+'200000000000000'` is the answer, so at `--reveal 0` a failing test prints its name and
+timing and nothing else. The default is 1.
+
 Verdicts: `PASS` · `FAIL` (wrong answer, with the first differing token) · `TLE` ·
 `RE` (nonzero exit / crash, with stderr). Exit code 0 only when everything passes, so
 `judge.sh` drops straight into a git hook or CI step.
+
+Wrappers: `./run.sh` and `./judge.sh` on macOS/Linux, `run.cmd` and `judge.cmd` on
+Windows. Each probes for a working Python 3 rather than assuming `python3` resolves to
+one — it does not on Windows, where `python3.exe` is usually the Microsoft Store stub.
+Set `OA_PYTHON` to override.
 
 ## Scaling report
 
@@ -312,8 +318,9 @@ Scaling — largest tests, by input size
   memory ~ n^0.95  (12.3 MB runtime baseline subtracted)
 ```
 
-Peak memory is exact on Windows and Linux, and reports `n/a` elsewhere rather than a
-number that would quietly mean something else. Both curves have a large constant term
+Peak memory is exact on Windows and sampled on Linux and macOS (SKILL.md, "Windows and
+macOS", covers what that costs you); anywhere else it is `n/a` rather than a number
+that would quietly mean something else. Both curves have a large constant term
 — process startup, and the runtime's baseline heap — which is subtracted before
 fitting; without that, a perfectly linear solution reads as sub-linear.
 

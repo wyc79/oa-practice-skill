@@ -6,7 +6,13 @@ whole job is to disagree with the user's clever solution when the clever one is 
 120s), so slow is fine. If it still cannot reach the largest generated case, add
 reference_fast.py next to this file with the intended algorithm: it answers only the
 tests this one times out on, and must agree with this one everywhere this one finishes.
+
+The body below is a worked example for "sum an array". Delete the TEMPLATE line once
+you have replaced it; until then the harness refuses to compute answers, because a
+reference for the wrong problem produces a suite the user cannot ever pass.
 """
+
+TEMPLATE = True  # <- delete this line once you have rewritten solve()
 
 
 def solve(data: str) -> str:

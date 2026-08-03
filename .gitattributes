@@ -1,0 +1,12 @@
+# cmd.exe seeks through a batch file as it runs; an LF-only file with a `for` block
+# and a `goto` inside it can jump to the wrong offset. Keep the wrappers CRLF.
+*.cmd text eol=crlf
+
+# Everything the harness reads or writes is LF, on every platform, so the same seed
+# produces byte-identical tests on Windows and macOS.
+*.sh   text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.in   text eol=lf
+*.out  text eol=lf

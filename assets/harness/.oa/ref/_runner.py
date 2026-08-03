@@ -19,7 +19,11 @@ def main():
     mod.__file__ = str(path)
     sys.modules["oa_reference"] = mod
     exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), mod.__dict__)
-    sys.stdout.write(str(mod.solve(sys.stdin.read())).rstrip("\n") + "\n")
+    # Both ends go through .buffer with an explicit encoding: sys.stdin on a cp936
+    # or cp1252 console would otherwise mis-decode UTF-8 input, and sys.stdout would
+    # turn every "\n" into "\r\n" on Windows.
+    data = sys.stdin.buffer.read().decode("utf-8").replace("\r\n", "\n")
+    sys.stdout.buffer.write((str(mod.solve(data)).rstrip("\n") + "\n").encode("utf-8"))
 
 
 if __name__ == "__main__":

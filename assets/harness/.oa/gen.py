@@ -7,7 +7,14 @@ Use only `rng` for randomness so runs are reproducible.
 `LIMITS` and `measure()` declare the statement's constraints so the harness can check
 that the suite actually reaches them. Transcribe the constraint line verbatim into the
 comment, fill in LIMITS, and let `oa.py gen` tell you which boundary you missed.
+
+Everything below is a worked example for "sum an array" — it runs, and it would
+happily generate a full test suite for a problem nobody asked about. Delete the
+TEMPLATE line once this file describes the real problem; until then the harness
+refuses to generate.
 """
+
+TEMPLATE = True  # <- delete this line once you have rewritten the file
 
 # Constraints, transcribed verbatim from the statement:
 #   0 <= n <= 2*10^5
