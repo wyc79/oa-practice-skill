@@ -163,6 +163,12 @@ python3 oa.py answers                  # the slow pass; resumable, cached
 ./run.sh                               # stub must compile and fail loudly
 ```
 
+Iterate freely: `tests/hidden/` records the generator, seed and references it was built
+from, so an edit to any of them rebuilds what it invalidates on the next command rather
+than being silently overridden by the cache. A new case in `gen.py` costs one reference
+run; a change to a reference costs the whole answer pass, which is the honest price of
+having changed the oracle.
+
 Run that last one through the wrapper, not `oa.py` directly — it is the only step that
 proves the button the user will actually press works on this machine. On Windows use
 `.\run.cmd`. If it exits 127 the interpreter probe came up empty; set `OA_PYTHON` and
@@ -197,7 +203,9 @@ the second the answers. If they want it strict, `judge --reveal 0` prints the sc
 and nothing else — no diffs, no expected values. Worth one line: a passing `judge` also prints a scaling
 report — measured time and peak memory against input size, with a fitted growth
 exponent — so they can see whether they hit the intended complexity rather than just
-squeaking under the limit. Then get out of the way.
+squeaking under the limit. It declines to print an exponent it cannot stand behind, and
+on a fast solution that is the usual outcome; say so, or the blank reads as a fault.
+Then get out of the way.
 
 ## Modes worth knowing
 

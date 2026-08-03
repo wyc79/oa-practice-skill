@@ -13,6 +13,7 @@ Config lives in problem.json. Hidden generator lives in .oa/, reference solution
 in .oa/ref/.
 """
 import argparse
+import hashlib
 import importlib.util
 import json
 import math
@@ -35,6 +36,7 @@ FAST = REF_DIR / "reference_fast.py"
 RUNNER = REF_DIR / "_runner.py"
 HIDDEN = ROOT / "tests" / "hidden"
 TIMINGS = "_timings.json"
+STAMP = "_stamp.json"
 
 G = "\033[32m"; R = "\033[31m"; Y = "\033[33m"; DIM = "\033[2m"; B = "\033[1m"; X = "\033[0m"
 if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
@@ -485,17 +487,73 @@ def case_name(i, label):
     return f"t{i:02d}-{slug}" if slug else f"t{i:02d}"
 
 
+# ------------------------------------------------------------------- staleness
+# tests/hidden/ is a cache of two expensive things — the generated inputs, and the
+# reference's answers to them. Both were previously keyed on nothing but existence,
+# so editing .oa/gen.py or a reference and rerunning `judge` scored the solution
+# against the *old* suite and printed a green nobody had earned. Fingerprint what
+# each half was built from, and rebuild the half that no longer matches.
+
+def sha(path):
+    p = Path(path)
+    return hashlib.sha256(p.read_bytes()).hexdigest()[:16] if p.exists() else None
+
+
+def input_stamp(c):
+    """What tests/hidden/*.in was generated from."""
+    return {"gen": sha(ROOT / ".oa" / "gen.py"), "seed": c["seed"]}
+
+
+def answer_stamp():
+    """What tests/hidden/*.out was computed by. Either reference can set answers,
+    so a change to either invalidates all of them."""
+    return {"ref": [sha(BRUTE), sha(FAST)]}
+
+
+def read_stamp():
+    try:
+        return json.loads(read(HIDDEN / STAMP))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+
+
+def save_stamp(**fields):
+    s = read_stamp()
+    s.update(fields)
+    HIDDEN.mkdir(parents=True, exist_ok=True)
+    write(HIDDEN / STAMP, json.dumps(s, indent=1))
+
+
+def stale(want):
+    """Which of `want`'s fields the cache disagrees with. A field the cache never
+    recorded counts as stale — provenance you cannot check is provenance you do not
+    have — but say so differently, because "gen changed" about a file nobody has
+    touched sends the reader looking for an edit that was never made."""
+    have = read_stamp()
+    return [k for k, v in want.items() if have.get(k) != v]
+
+
+def why_stale(want, subject):
+    have = read_stamp()
+    if not any(k in have for k in want):
+        return f"no record of what built {subject}"
+    return f"{', '.join(stale(want))} changed since {subject} were built"
+
+
 def generate(c, force=False):
     """Write tests/hidden/*.in from .oa/gen.py, then check boundary coverage."""
     refuse_template(ROOT / ".oa" / "gen.py")
     gen = load_module(ROOT / ".oa" / "gen.py", "oa_gen")
     if gen is None:
         die("need .oa/gen.py to judge")
-    if force and HIDDEN.exists():
-        shutil.rmtree(HIDDEN)
     HIDDEN.mkdir(parents=True, exist_ok=True)
-    if list(HIDDEN.glob("*.in")) and not force:
+    cached = sorted(HIDDEN.glob("*.in"))
+    want = input_stamp(c)
+    changed = stale(want)
+    if cached and not force and not changed:
         return
+    if cached and changed and not force:
+        print(f"{Y}{why_stale(want, 'these tests')} — rebuilding them{X}")
 
     rng = random.Random(c["seed"])
     tests = []
@@ -503,10 +561,30 @@ def generate(c, force=False):
         label, data = item if isinstance(item, tuple) else (None, item)
         if not data.endswith("\n"):
             data += "\n"
-        name = case_name(i, label)
-        write(HIDDEN / f"{name}.in", data)
-        tests.append((name, data))
-    print(f"{DIM}generated {len(tests)} test inputs{X}")
+        tests.append((case_name(i, label), data))
+
+    # Rewrite only what actually differs. An answer stays valid exactly as long as
+    # the input that produced it is unchanged, so appending a case to gen.py should
+    # cost one reference run rather than the whole suite — which is the entire point
+    # of `answers` being a separate resumable pass.
+    fresh = {name for name, _ in tests}
+    for f in cached:
+        if f.stem not in fresh:
+            f.unlink()
+            f.with_suffix(".out").unlink(missing_ok=True)
+    kept = 0
+    for name, data in tests:
+        inp = HIDDEN / f"{name}.in"
+        out = inp.with_suffix(".out")
+        if not force and inp.exists() and read(inp) == data:
+            kept += out.exists()
+            continue
+        write(inp, data)
+        out.unlink(missing_ok=True)
+    save_stamp(**want)
+
+    reuse = f"{DIM}, {kept} cached answers still valid{X}" if kept else ""
+    print(f"{DIM}generated {len(tests)} test inputs{X}{reuse}")
 
     print(f"{B}Boundary coverage{X}")
     if not check_limits(gen, tests):
@@ -538,7 +616,22 @@ def answers(c, force=False):
         die(f"missing {BRUTE.relative_to(ROOT)}")
     refuse_template(BRUTE)
     limit = c["ref_time_limit_ms"]
+
+    # An edited reference invalidates every answer it produced, and there is no way
+    # to know which ones it would have changed. Recomputing all of them is the cost
+    # of the edit — silently keeping answers the current reference disagrees with is
+    # the alternative, and that grades the user against a solution nobody is running.
+    want = answer_stamp()
+    if stale(want) and any(f.with_suffix(".out").exists() for f in ins):
+        print(f"{Y}{why_stale(want, 'these answers')} — recomputing all {len(ins)}{X}")
+        force = True
+
     todo = [f for f in ins if force or not f.with_suffix(".out").exists()]
+    # Stamp before computing, never after. A stamp written on completion would be
+    # missing after an interrupt, the next run would read that as "the reference
+    # changed", and it would throw away every answer that did land — turning the
+    # resumable pass into one that has to start over.
+    save_stamp(**want)
     if not todo:
         return
 
@@ -636,10 +729,9 @@ def human_bytes(b):
 
 
 def fit_exponent(points):
-    """Least-squares slope of log(y) against log(x): the k in y ~ x^k.
-
-    Returns None when the data is too thin or too flat to say anything.
-    """
+    """Least-squares slope of log(y) against log(x): the k in y ~ x^k, plus the
+    fraction of the variance that slope explains. Returns (k, r2), or None when the
+    data is too thin or too flat to say anything."""
     pts = [(x, y) for x, y in points if x and x > 0 and y and y > 0]
     if len(pts) < 3:
         return None
@@ -647,10 +739,44 @@ def fit_exponent(points):
     lx = [math.log(x) for x, _ in pts]
     ly = [math.log(y) for _, y in pts]
     mx, my = sum(lx) / n, sum(ly) / n
-    den = sum((a - mx) ** 2 for a in lx)
-    if den <= 1e-9:
+    sxx = sum((a - mx) ** 2 for a in lx)
+    syy = sum((b - my) ** 2 for b in ly)
+    sxy = sum((a - mx) * (b - my) for a, b in zip(lx, ly))
+    if sxx <= 1e-9 or syy <= 1e-9:
         return None
-    return sum((a - mx) * (b - my) for a, b in zip(lx, ly)) / den
+    return sxy / sxx, sxy * sxy / (sxx * syy)
+
+
+def fit_curve(pts, min_signal, floor_note, min_spread=3.0, min_r2=0.9):
+    """(k, r2) when a curve through these points means something, otherwise a short
+    sentence saying why it does not.
+
+    Every guard is asked of the points that will *actually* be fitted. Gating on a
+    superset is what let a cold-start outlier — at the smallest input, discarded by
+    the fit itself — unlock the fit it took no part in, and report a merge sort as
+    n^0.60.
+
+    r2 is the decisive one. Tests of the same size but different *shape* — sorted
+    versus random at 2 MB — cost visibly different time, so points sitting together
+    in x and far apart in y are not samples of one curve and no amount of range in x
+    rescues a line drawn through them.
+    """
+    pts = [p for p in pts if p[1] > 0]
+    if len(pts) < 3:
+        return f"only {len(pts)} of the largest tests rose clear of {floor_note}"
+    xs = [x for x, _ in pts]
+    if max(xs) / min(xs) < min_spread:
+        return (f"the {len(pts)} tests clear of {floor_note} span only "
+                f"{max(xs) / min(xs):.1f}x in input size")
+    if max(y for _, y in pts) < min_signal:
+        return f"nothing rose far enough above {floor_note} to measure"
+    got = fit_exponent(pts)
+    if got is None:
+        return "the measurements are degenerate"
+    if got[1] < min_r2:
+        return (f"the {len(pts)} largest tests do not lie on one curve (R²={got[1]:.2f}) "
+                f"— test shape is costing more than test size")
+    return got
 
 
 def complexity_report(c, stats):
@@ -668,40 +794,46 @@ def complexity_report(c, stats):
     t_base = min(r[2] for r in all_pts)
     mems = [r[3] for r in all_pts if r[3]]
     m_base = min(mems) if mems else None
-    t_signal = max(r[2] for r in all_pts) - t_base
-    m_signal = (max(mems) - m_base) if mems else 0
 
     # Fit only above a size floor. On the tiny tests the runtime *is* the process
     # startup and the memory *is* the runtime baseline, so their y values are noise
     # sitting at x values spanning several decades — including them flattens the
     # slope of a perfectly linear solution towards zero.
-    pts = [r for r in all_pts if r[1] >= all_pts[-1][1] / 1000.0]
-    spread = pts[-1][1] / pts[0][1] if len(pts) >= 2 else 1
-    if len(pts) < 4 or spread < 10:
-        print(f"  {DIM}only {len(pts)} tests within 1000x of the largest, spanning {spread:.0f}x "
+    big = [r for r in all_pts if r[1] >= all_pts[-1][1] / 1000.0]
+    spread = big[-1][1] / big[0][1] if len(big) >= 2 else 1
+    if len(big) < 4 or spread < 10:
+        print(f"  {DIM}only {len(big)} tests within 1000x of the largest, spanning {spread:.0f}x "
               f"— too narrow to fit. Add a geometric size ladder to .oa/gen.py.{X}")
         return
 
-    # A curve fitted through noise is worse than no curve. Time needs real dynamic
-    # range above the startup floor before its exponent means anything.
     # Points sitting within a few ms of the floor are startup jitter, not work. They
     # span decades of x at a constant y, which flattens the slope of even a quadratic
     # solution towards zero, so they are dropped rather than fitted.
-    kt = (fit_exponent([(r[1], r[2] - t_base) for r in pts if r[2] - t_base >= 3.0])
-          if t_signal >= max(25.0, 2 * t_base) else None)
-    km = (fit_exponent([(r[1], r[3] - m_base) for r in pts if r[3]])
-          if m_signal >= (4 << 20) else None)
+    # Time's floor is absolute — a few milliseconds is the clock's own resolution.
+    # Memory's is relative: the smallest tests differ from the baseline by an
+    # allocator rounding rather than by anything the input did, and how big that
+    # rounding is depends entirely on the problem's scale. Both filters exist to keep
+    # points that carry no signal out of a fit that would otherwise be dragged by them.
+    t_pts = [(r[1], r[2] - t_base) for r in big if r[2] - t_base >= 3.0]
+    m_sig = [(r[1], r[3] - m_base) for r in big if r[3] and r[3] > m_base]
+    m_top = max((y for _, y in m_sig), default=0)
+    m_pts = [(x, y) for x, y in m_sig if y >= m_top / 16]
+    kt = fit_curve(t_pts, max(25.0, 2 * t_base), f"the {t_base:.0f} ms startup floor")
+    km = fit_curve(m_pts, 4 << 20, f"the {human_bytes(m_base)} baseline heap")
 
-    if kt is not None:
-        note = f"  {Y}— above linear{X}" if kt > 1.35 else ""
-        print(f"  {B}time   ~ n^{kt:.2f}{X}{note}  {DIM}({t_base:.0f} ms startup subtracted){X}")
+    if isinstance(kt, tuple):
+        note = f"  {Y}— above linear{X}" if kt[0] > 1.35 else ""
+        print(f"  {B}time   ~ n^{kt[0]:.2f}{X}{note}  {DIM}({t_base:.0f} ms startup subtracted, "
+              f"{len(t_pts)} points, R²={kt[1]:.2f}){X}")
     else:
-        print(f"  {DIM}time:   {t_signal:.0f} ms of range above a {t_base:.0f} ms startup floor "
-              f"— too little to fit a curve, which is itself a good sign{X}")
-    if km is not None:
-        print(f"  {B}memory ~ n^{km:.2f}{X}  {DIM}({human_bytes(m_base)} runtime baseline subtracted){X}")
+        print(f"  {DIM}time:   no exponent — {kt}.")
+        print(f"          A solution too fast to characterise is a good sign; a suite whose"
+              f"\n          largest tests cluster is a reason to widen the size ladder.{X}")
+    if isinstance(km, tuple):
+        print(f"  {B}memory ~ n^{km[0]:.2f}{X}  {DIM}({human_bytes(m_base)} runtime baseline "
+              f"subtracted, R²={km[1]:.2f}){X}")
     else:
-        print(f"  {DIM}memory: {human_bytes(m_signal)} of variation — too flat to fit{X}")
+        print(f"  {DIM}memory: no exponent — {km}.{X}")
 
     ref = ref_timings()
     if ref:
@@ -722,6 +854,17 @@ def execute(c, argv, tests, reveal, label):
     slowest = 0.0
     over = skipped = 0
     stats = []
+
+    # The first process launched pays cold-start cost none of the others do: loading
+    # a just-compiled binary, resolving its DLLs, a first-touch antivirus scan. Here
+    # that is ~40 ms against ~8 ms for every later run, and it lands on whichever test
+    # runs first — usually the smallest, where it reads as a tiny input being the
+    # slowest in the suite and drags the scaling fit with it. Spend one run on the
+    # smallest input, cheap ones only, and throw the result away.
+    warm = min((i for _, i, e in tests if e is not None), key=len, default="")
+    if warm and len(warm) <= (1 << 16):
+        run_once(argv, warm, c["time_limit_ms"])
+
     for name, inp, exp in tests:
         if exp is None:
             # A sample .in with no .out. samples() returns these deliberately, so
@@ -825,6 +968,29 @@ def selfcheck(c):
 
     ins = sorted(HIDDEN.glob("*.in"))
     if ins:
+        # selfcheck is the last gate before hand-over and the only command that reads
+        # the cache without rebuilding it, so it has to say when the cache no longer
+        # matches what would be built now — otherwise it green-lights a coverage
+        # table describing tests the judge will replace on its next run.
+        # Step 7 of the workflow runs selfcheck *before* answers, so an empty answer
+        # cache is the expected state here, not a stale one. Only judge provenance
+        # that exists.
+        outs = [f for f in ins if f.with_suffix(".out").exists()]
+        if not outs:
+            print(f"\n{DIM}no answers computed yet — python3 oa.py answers, or let judge do it{X}")
+        ins_drift = stale(input_stamp(c))
+        out_drift = stale(answer_stamp()) if outs else []
+        if ins_drift or out_drift:
+            # Which half is stale decides both what judge will rebuild and whether the
+            # coverage table printed below still describes the suite being reported on.
+            effect = ("the coverage table below describes a suite the next judge run "
+                      "will regenerate" if ins_drift else
+                      "the next judge run will recompute every answer")
+            fix = "gen && python3 oa.py answers" if ins_drift else "answers"
+            print(f"\n{R}tests/hidden is stale{X} — it no longer matches the current"
+                  f" {', '.join(ins_drift + out_drift)}.\n  {DIM}{effect}."
+                  f"\n  Run: python3 oa.py {fix}{X}")
+            bad += 1
         gen = load_module(ROOT / ".oa" / "gen.py", "oa_gen")
         print(f"\n{B}Boundary coverage{X} {DIM}({len(ins)} cached tests){X}")
         if not check_limits(gen, [(f.stem, read(f)) for f in ins]):

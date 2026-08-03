@@ -297,6 +297,16 @@ python3 oa.py answers          # compute the expected outputs (slow, resumable)
 python3 oa.py selfcheck        # both references vs samples + coverage — before handing over
 ```
 
+`tests/hidden/` records what built it in `_stamp.json` — a hash of `.oa/gen.py`, the
+seed, and a hash of each reference — and every command checks it, so an edit you make
+takes effect on the next run instead of being quietly overridden by the cache. Editing
+`gen.py` or changing the seed rebuilds the inputs, keeping the answer to every test
+whose input came out byte-identical: appending a case costs one reference run, not the
+suite. Editing either reference discards every answer, because there is no way to know
+which ones it would have changed and keeping answers the current oracle disagrees with
+grades the user against a solution nobody is running. `selfcheck` refuses to pass on a
+stale cache rather than describing tests the next `judge` will replace.
+
 `--reveal N` explains the first N failures and no more, where "explains" covers the
 one-line reason as well as the input/expected/actual block — `token 0: got '0', want
 '200000000000000'` is the answer, so at `--reveal 0` a failing test prints its name and
@@ -328,22 +338,37 @@ input size, and a fitted growth exponent:
 Scaling — largest tests, by input size
     19.5 KB       95 ms     12.6 MB   t06-n2700
     87.0 KB      545 ms     13.3 MB   t07-max
-  time   ~ n^1.69  — above linear  (34 ms startup subtracted)
-  memory ~ n^0.95  (12.3 MB runtime baseline subtracted)
+  time   ~ n^1.69  — above linear  (34 ms startup subtracted, 5 points, R²=0.99)
+  memory ~ n^0.95  (12.3 MB runtime baseline subtracted, R²=0.97)
 ```
 
 Peak memory is exact on Windows and sampled on Linux and macOS (SKILL.md, "Windows and
 macOS", covers what that costs you); anywhere else it is `n/a` rather than a number
 that would quietly mean something else. Both curves have a large constant term
 — process startup, and the runtime's baseline heap — which is subtracted before
-fitting; without that, a perfectly linear solution reads as sub-linear.
+fitting; without that, a perfectly linear solution reads as sub-linear. Points that
+carry no signal are then dropped: for time, anything within 3 ms of the floor, which
+is the clock's own resolution; for memory, anything under a sixteenth of the largest
+reading, since near the baseline the difference is an allocator rounding rather than
+anything the input did.
 
-Each fit is gated, because a curve through noise is worse than no curve. If the
-largest test runs close to the startup floor, or the suite has no spread of sizes, the
-report says so instead of printing an exponent. Two consequences worth knowing: a fast
-solution on small inputs often gets no time estimate at all — that is the expected
-outcome, not a failure — and the estimate is far sharper for C++ (millisecond startup)
-than for Python (tens of milliseconds of it).
+What survives is fitted only if the fit means something, and `R²` — the share of the
+variance the exponent explains — is the check that matters. Tests of the same size but
+different *shape* cost visibly different time: a sorted 2 MB input and a random one are
+not two samples of one curve, and a line drawn through them reports a merge sort as
+`n^0.60`. A low `R²` is the report saying exactly that, and it is worth reading as a
+fact about the suite: it usually means the largest tests differ in kind, not in size.
+
+So a fit is declined when too few of the largest tests clear the floor, when the ones
+that do span too little input size, when nothing rises far enough above the floor to
+measure, or when `R²` is under 0.9. Each declines with its own sentence — they call for
+different things. "Nothing rose far enough above the floor" on a solution that passed
+comfortably is the expected outcome for anything fast, not a failure. "Span too little
+input size" is a suite problem: widen the geometric ladder. Expect the time estimate to
+be far sharper for C++ (millisecond startup) than for Python (tens of milliseconds of
+it), and expect exponents fitted against input *bytes* to understate: a true O(n²)
+solution reads around `n^1.5`, which is why 1.35 is the threshold for flagging
+"above linear" rather than something nearer 2.
 
 Reference timings recorded during `answers` are shown alongside for scale. They are
 Python, so treat the ratio as a sanity check rather than a benchmark.
