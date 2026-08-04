@@ -398,6 +398,85 @@ def test_custom_checker_reason_reaches_the_report(ws):
     assert "nope-sentinel" in out(oa(ws, "judge", "--reveal", "1", expect=1))
 
 
+# --------------------------------------------------- can the checker ever say no?
+# `checker: custom` replaces the harness's own comparison outright, and the file
+# doing the replacing is hand-written per problem. Nothing else here ever asks it to
+# reject anything: samples, coverage and the plumbing check all consult it, and all
+# three stay green while it accepts everything — so a checker that never says no
+# scores an empty solution at 100%.
+
+PERMISSIVE = "def check(inp, expected, actual):\n    return True\n"
+DISCRIMINATING = ("def check(inp, expected, actual):\n"
+                  "    return expected.split() == actual.split()\n")
+
+# Every case sums to zero, so every expected output is "0" and no two tests can be
+# crossed against each other.
+FLAT_GEN = '''
+LIMITS = {"n": (0, 100), "a_i": (-1000, 1000)}
+
+
+def measure(data):
+    t = data.split()
+    n = int(t[0])
+    return {"n": n, "a_i": [int(x) for x in t[1:1 + n]]}
+
+
+def fmt(xs):
+    return f"{len(xs)}\\n" + " ".join(map(str, xs)) + "\\n"
+
+
+def cases(rng):
+    yield "nzero", "0\\n\\n"
+    yield "pair", fmt([-1000, 1000])
+    yield "max", fmt([1000] * 50 + [-1000] * 50)
+'''
+
+
+def test_a_permissive_custom_checker_is_caught(ws):
+    oa(ws, "answers", expect=0)
+    cfg(ws, checker="custom")
+    write(ws / ".oa" / "checker.py", PERMISSIVE)
+    write(ws / "_check.py", MAIN)
+    p = oa(ws, "selfcheck", "--entry", "_check.py", expect=1)
+    assert "accepted another test's answer" in out(p)
+
+
+def test_a_discriminating_custom_checker_passes_the_control(ws):
+    oa(ws, "answers", expect=0)
+    cfg(ws, checker="custom")
+    write(ws / ".oa" / "checker.py", DISCRIMINATING)
+    write(ws / "_check.py", MAIN)
+    p = oa(ws, "selfcheck", "--entry", "_check.py", expect=0)
+    assert "rejects another test's answer" in out(p)
+
+
+def test_a_checker_that_raises_on_a_crossed_answer_counts_as_rejecting(ws):
+    # A real checker may well blow up on an answer that makes no sense for the input
+    # it is handed. That is a rejection, not a reason to take the harness down.
+    oa(ws, "answers", expect=0)
+    cfg(ws, checker="custom")
+    write(ws / ".oa" / "checker.py",
+          "def check(inp, expected, actual):\n"
+          "    if expected.split() != actual.split():\n"
+          "        raise ValueError('nonsense')\n"
+          "    return True\n")
+    write(ws / "_check.py", MAIN)
+    oa(ws, "selfcheck", "--entry", "_check.py", expect=0)
+
+
+def test_the_checker_control_is_skipped_when_no_two_answers_differ(ws):
+    # Nothing to cross, so there is no edit that would satisfy the control. Say so
+    # and carry on rather than failing a workspace nobody can fix.
+    write(ws / ".oa" / "gen.py", FLAT_GEN)
+    sample(ws, 1, "2\n-5 5\n", "0\n")
+    oa(ws, "answers", expect=0)
+    cfg(ws, checker="custom")
+    write(ws / ".oa" / "checker.py", PERMISSIVE)
+    write(ws / "_check.py", MAIN)
+    p = oa(ws, "selfcheck", "--entry", "_check.py", expect=0)
+    assert "same expected output" in out(p)
+
+
 # ------------------------------------------------------------- reveal budgets
 # Submit returns a score. The expected output of a hidden test *is* the answer, so a
 # judge that volunteers the diff has quietly turned Submit into Run.

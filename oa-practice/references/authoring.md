@@ -287,6 +287,15 @@ Use it when:
 
 Return a reason string; it shows up next to the FAIL line and saves the user a debugging round.
 
+`selfcheck` runs one control over this file, because a hand-written checker is the one
+comparison the harness cannot check for you: it feeds the checker one test's input
+paired with a *different* test's expected output and requires at least one such pair to
+be rejected. A checker raising on nonsense counts as rejecting it. Failing the control
+means the checker is not comparing anything — and since the sample check, the coverage
+table and the plumbing check all consult that same checker, nothing else would have
+noticed. It is skipped, with a note, when every scored test has the same answer and
+there is nothing to cross.
+
 ## Harness commands
 
 ```
@@ -298,7 +307,7 @@ Return a reason string; it shows up next to the FAIL line and saves the user a d
 ./oa.sh gen               # refresh tests/hidden/*.in + boundary coverage (fast)
 ./oa.sh gen --force       # ...from scratch, discarding every cached answer
 ./oa.sh answers           # compute the expected outputs (slow, resumable)
-./oa.sh selfcheck         # both references vs samples + coverage + staleness
+./oa.sh selfcheck         # references vs samples + coverage + staleness + checker
 ./oa.sh selfcheck --entry _check.py   # ...and the plumbing — the last gate before hand-over
 ```
 

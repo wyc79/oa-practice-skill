@@ -246,6 +246,12 @@ the usual outcome; say so, or the blank reads as a fault. Then get out of the wa
 `check(inp, expected, actual) -> bool | (bool, reason)`. Validate the user's output
 against the input and compare its *score* to the reference's — never string-compare.
 
+A custom checker replaces the harness's comparison outright, so `selfcheck` asks it to
+prove it can still say no: it hands the checker one test's input with a different
+test's answer and requires a rejection on at least one such pair. Nothing else can
+catch this — every other gate here *consults* the checker, so a checker stuck at True
+keeps them all green while scoring a solution that prints nothing at 100%.
+
 **Interactive / stateful problems**: out of scope. Say so and offer a fixed-transcript
 approximation instead.
 

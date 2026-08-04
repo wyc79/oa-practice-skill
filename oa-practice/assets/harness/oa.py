@@ -1017,6 +1017,58 @@ def survives_inputs(c, argv, tests):
     return 1
 
 
+def check_checker(c, scored):
+    """Does .oa/checker.py ever say no?
+
+    `checker: custom` replaces compare() outright with a file written by hand for this
+    one problem, and nothing else here ever asks that file to reject anything: the
+    sample check, the coverage table and the plumbing check all consult it, and all
+    three stay green while it accepts everything. A checker stuck at True scores a
+    solution that prints nothing at 100%, which is the same failure the plumbing check
+    exists to prevent, arriving through the one door that check leaves open.
+
+    So hand it one test's input with a different test's answer — wrong by construction
+    — and require it to notice at least once. Once, not always: a checker for a
+    constructive problem judges the answer against the input alone, and two inputs
+    similar enough for one's answer to satisfy the other is unlikely but not absurd.
+    Never rejecting anything is the failure worth naming.
+    """
+    pairs = []
+    for i, (name, inp, exp) in enumerate(scored):
+        rest = scored[i + 1:] + scored[:i]
+        other = next((e for _, _, e in rest if e.split() != exp.split()), None)
+        if other is not None:
+            pairs.append((inp, exp, other))
+        if len(pairs) >= 8:
+            break
+
+    if not pairs:
+        print(f"  {DIM}every scored test has the same expected output, so there is "
+              f"nothing to\n  cross against it — the checker went unexercised{X}")
+        return 0
+
+    rejected = 0
+    for inp, exp, other in pairs:
+        try:
+            ok, _ = compare(c, inp, exp, other)
+        except Exception:
+            # Blowing up on an answer that makes no sense for this input is a
+            # rejection. It is not a reason to take selfcheck down.
+            ok = False
+        rejected += not ok
+
+    if rejected:
+        print(f"  {G}OK{X}   {DIM}.oa/checker.py rejects another test's answer "
+              f"({rejected} of {len(pairs)} crossed pairs){X}")
+        return 0
+    print(f"  {R}BAD{X}  .oa/checker.py accepted another test's answer as correct, on "
+          f"all {len(pairs)} pairs")
+    print(f"  {DIM}It is not comparing anything, so it cannot fail a solution either: an\n"
+          f"  entry file that prints nothing would score 100%. Every other gate here\n"
+          f"  consults this same checker, so all of them stay green while it does.{X}")
+    return 1
+
+
 def check_plumbing(c, entry):
     """Does the entry file's I/O agree with the generator and the reference?
 
@@ -1126,6 +1178,9 @@ def selfcheck(c, entry=None):
             bad += 1
     else:
         print(f"\n{Y}no tests generated yet — run: python3 oa.py gen{X}")
+    if c["checker"] == "custom":
+        print(f"\n{B}Checker{X} {DIM}— does .oa/checker.py ever say no?{X}")
+        bad += check_checker(c, [t for t in samples() + hidden() if t[2] is not None])
     bad += check_plumbing(c, entry)
     return 1 if bad else 0
 
