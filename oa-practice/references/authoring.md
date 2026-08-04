@@ -119,6 +119,16 @@ somewhere. Endpoint coverage still applies to each, the coverage table prints wh
 keys were exempted, and the saturation hint skips them too — nagging that an
 unsaturable key is unsaturated is the complaint the exemption already answered.
 
+**Attainable but not saturable.** The weaker version of the same thing: the corner
+*can* reach a key's maximum, it just cannot hold every element there. `k <= 10^4` lists
+of `len <= 500` under `Σlen <= 10^4` permits exactly one list of 500 in a 10^4-list
+input and nothing beyond it. `no-corner` is the wrong tool — it would also drop the
+requirement that some test attain 500, which is a check worth keeping. Mark the key
+`(lo, hi, "no-saturate")` instead: it stays required in the joint corner, and only the
+saturation hint — which has no legal answer here, and no edit that would silence it —
+is dropped. The coverage table prints `(saturation exempt)`, so the waiver stays as
+visible as the corner one.
+
 Where several tests attain every upper bound, the corner check reports the most
 saturated one, not the first.
 
@@ -308,7 +318,7 @@ there is nothing to cross.
 ./oa.sh gen --force       # ...from scratch, discarding every cached answer
 ./oa.sh answers           # compute the expected outputs (slow, resumable)
 ./oa.sh selfcheck         # references vs samples + coverage + staleness + checker
-./oa.sh selfcheck --entry _check.py   # ...and the plumbing — the last gate before hand-over
+./oa.sh selfcheck --entry _check.cpp  # ...and the plumbing — the last gate before hand-over
 ```
 
 Windows: `.\run.cmd`, `.\judge.cmd`, `.\oa.cmd <cmd>`. All three wrappers forward to
@@ -329,6 +339,15 @@ stand-in for the main file — through the real tests and checker and demands 10
 separately feeds every generated input to the real entry and demands it not die.
 Without `--entry` it reports the output shape as unchecked and fails, once there are
 answers to check against. SKILL.md step 7 has why it is not optional.
+
+The stand-in shares the entry file's extension, because `--entry` goes through the same
+`build()` and so to the same toolchain: `_check.cpp` for the default C++ workspace,
+`_check.py` for a Python one. It is a *copy* of the main file with the algorithm filled
+in — write one from scratch and it re-implements the parsing, which is the half of the
+plumbing the gate was supposed to be checking. A workspace driven by `build_cmd` /
+`run_cmd` cannot use `--entry` at all: those name their own files, so the stand-in
+would be ignored and the stub scored in its place. `selfcheck` says so rather than
+reporting the stub's score; point `run_cmd` at the stand-in for the length of the check.
 
 `--reveal N` explains the first N failures and no more, where "explains" covers the
 one-line reason as well as the input/expected/actual block — `token 0: got '0', want

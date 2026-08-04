@@ -8,10 +8,14 @@ Usage (or ./oa.sh <cmd> / .\oa.cmd <cmd>, which find a working interpreter first
     python3 oa.py answers          # compute the expected outputs (slow, resumable)
     python3 oa.py case <name>      # run one test, show input/expected/actual
     python3 oa.py selfcheck        # references vs samples, coverage, staleness
-    python3 oa.py selfcheck --entry _check.py   # ...and the entry file's I/O
+    python3 oa.py selfcheck --entry _check.cpp  # ...and the entry file's I/O
 
 `run` explains every failing sample; `judge` explains none, because the expected
 output of a hidden test is the answer. `--reveal N` overrides either way.
+
+The `--entry` stand-in carries the entry file's extension, because it goes through the
+same build() and so to the same toolchain: `_check.cpp` for the default C++ workspace,
+`_check.py` for a Python one.
 
 Config lives in problem.json. Hidden generator lives in .oa/, reference solutions
 in .oa/ref/.
@@ -347,9 +351,17 @@ def compare(c, inp, expected, actual):
 # ---------------------------------------------------------- boundary coverage
 
 def bounds(entry):
-    """A LIMITS value is (lo, hi), or (lo, hi, "no-corner") when two upper bounds
-    are mutually exclusive and this key cannot be part of the joint max corner."""
-    return entry[0], entry[1], "no-corner" in entry[2:]
+    """A LIMITS value is (lo, hi), optionally followed by markers:
+
+      "no-corner"    two upper bounds are mutually exclusive, so this key cannot be
+                     part of the joint max corner at all.
+      "no-saturate"  the corner can *attain* this key's max but cannot hold every
+                     element there, because a derived bound forbids it — 10^4 lists
+                     of 500 against a total-length budget of 10^4. The key stays
+                     required in the corner; only the saturation hint is dropped.
+    """
+    flags = entry[2:]
+    return entry[0], entry[1], "no-corner" in flags, "no-saturate" in flags
 
 
 def check_limits(gen_mod, tests):
@@ -385,7 +397,7 @@ def check_limits(gen_mod, tests):
         for k, v in measure(data).items():
             if k not in lim:
                 continue
-            lo, hi, _ = bounds(lim[k])
+            lo, hi = bounds(lim[k])[:2]
             listy = not isinstance(v, (int, float))
             vals = list(v) if listy else [v]
             obs[k]["listy"] |= listy
@@ -416,7 +428,7 @@ def check_limits(gen_mod, tests):
     w = max(max(len(k) for k in lim), len("joint max corner"))
     sw = max(len(f"{bounds(e)[0]} .. {bounds(e)[1]}") for e in lim.values())
     for k, entry in lim.items():
-        lo, hi, exempt = bounds(entry)
+        lo, hi, exempt, no_sat = bounds(entry)
         o = obs[k]
         miss = [n for n, got, want in (("min", o["lo"], lo), ("max", o["hi"], hi)) if got != want]
         span = f"{lo} .. {hi}"
@@ -426,7 +438,8 @@ def check_limits(gen_mod, tests):
             print(f"  {k:<{w}}  {span:<{sw}}  {R}MISSING {' and '.join(miss)}{X}  {DIM}{got}{X}")
         else:
             at = f"min {o['lo_at']}  max {o['hi_at']}"
-            tag = f"  {DIM}(corner exempt){X}" if exempt else ""
+            waived = [n for n, on in (("corner", exempt), ("saturation", no_sat)) if on]
+            tag = f"  {DIM}({' and '.join(waived)} exempt){X}" if waived else ""
             print(f"  {k:<{w}}  {span:<{sw}}  {DIM}{at}{X}  {G}OK{X}{tag}")
 
     corner_keys = {k for k, e in lim.items() if not bounds(e)[2]}
@@ -443,11 +456,12 @@ def check_limits(gen_mod, tests):
     else:
         print(f"  {'joint max corner':<{w}}  {corner:<{sw}}  {G}OK{X}")
         for k, (vmin, vmax) in spread[corner].items():
-            _, hi, exempt_k = bounds(lim[k])
-            # A no-corner key is one the problem cannot max alongside the others.
-            # Nagging that it is unsaturated is the same complaint the exemption
-            # already answered, and there is no edit that would silence it.
-            if exempt_k or vmin == hi:
+            _, hi, exempt_k, no_sat_k = bounds(lim[k])
+            # Both exemptions mean the same thing here: the author has already said
+            # this key cannot be held at its maximum, so the hint has no legal answer
+            # and no edit would silence it. no-corner drops the key from the corner
+            # entirely; no-saturate keeps it required there and only drops the nag.
+            if exempt_k or no_sat_k or vmin == hi:
                 continue
             print(f"  {Y}hint{X} {corner} has {k} in [{vmin}, {vmax}], not saturated at {hi}"
                   f"  {DIM}— saturate it if the problem allows{X}")
@@ -1069,6 +1083,17 @@ def check_checker(c, scored):
     return 1
 
 
+def stand_in(c):
+    """What to call the known-correct stand-in.
+
+    Its suffix has to match the entry file's, because --entry goes through the same
+    build() and so to the same toolchain: `_check.py` in a C++ workspace — which is
+    the default — reaches g++ and comes back as a compile error rather than as the
+    gate this is meant to be.
+    """
+    return f"_check{Path(c['entry']).suffix}"
+
+
 def check_plumbing(c, entry):
     """Does the entry file's I/O agree with the generator and the reference?
 
@@ -1104,11 +1129,14 @@ def check_plumbing(c, entry):
             return bad
         print(f"  {R}{B}OUTPUT SHAPE UNCHECKED{X} — nothing has confirmed that {c['entry']} prints\n"
               f"       the shape .oa/ref/reference.py answers in.")
+        me = stand_in(c)
         print(f"  {DIM}A mismatch fails every hidden test at once and looks exactly like a wrong\n"
               f"  algorithm from the user's side, so it is the one failure they cannot debug.\n"
-              f"  Copy {c['entry']} to _check.py, fill in the algorithm, then:\n"
-              f"      python3 oa.py selfcheck --entry _check.py\n"
-              f"  and delete _check.py once it scores 100%.{X}")
+              f"  Copy {c['entry']} to {me} and fill in the algorithm — copy it rather than\n"
+              f"  writing one from scratch, or the stand-in re-implements the parsing and all\n"
+              f"  this proves is that it agrees with itself. Then:\n"
+              f"      python3 oa.py selfcheck --entry {me}\n"
+              f"  and delete {me} once it scores 100%.{X}")
         return bad + 1
 
     p = (ROOT / entry).resolve()
@@ -1122,6 +1150,14 @@ def check_plumbing(c, entry):
         die(f"--entry {entry} is the workspace's own entry file.\n"
             f"  The point is to score a *known-correct* solution against the suite, and\n"
             f"  {c['entry']} is the stub the user is meant to fill in.")
+    if c.get("run_cmd"):
+        # build() hands back run_cmd untouched, so --entry would build the stand-in and
+        # then run the stub — reporting the stub's score as the stand-in's, which reads
+        # as "the workspace is broken" on a workspace that is fine. Say so instead.
+        die(f"--entry cannot redirect a custom run_cmd.\n"
+            f"  build_cmd/run_cmd in problem.json name their own files, so {rel} would be\n"
+            f"  ignored and {c['entry']} scored in its place.\n"
+            f"  Point run_cmd (and build_cmd) at {rel} for the length of this check instead.")
     if not scored:
         print(f"  {R}nothing to score{X} — no samples and no answers yet")
         return bad + 1

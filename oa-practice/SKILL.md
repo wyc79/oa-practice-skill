@@ -176,8 +176,9 @@ Use only `rng` — reproducibility is what makes a failing test debuggable.
 cd <slug> && ./oa.sh gen               # boundary coverage must come back clean
 ./oa.sh selfcheck                      # references must reproduce every sample
 ./oa.sh answers                        # the slow pass; resumable, cached
-./oa.sh selfcheck --entry _check.py    # the plumbing check — see below; then delete it
+./oa.sh selfcheck --entry _check.cpp   # the plumbing check — see below; then delete it
 ./run.sh                               # stub must compile and fail loudly
+./judge.sh                             # what the stub scores — the user's floor
 ```
 
 On Windows, `.\oa.cmd gen` and so on, and `.\run.cmd`.
@@ -192,17 +193,28 @@ Go through the wrappers rather than calling `oa.py` directly — they probe for 
 interpreter, and a bare `python3` does not. `./run.sh` matters most: it is the only
 step that proves the button the user will actually press works here.
 
+The last line is the one whose output you have to read rather than just exit-code. A
+stub returning its placeholder passes every test whose answer happens to be degenerate
+— empty, `0`, `-1`, `NO` — so `judge` opens at 16% rather than 0% on any suite with a
+few empty-answer edge cases. That score is honest, but to someone who has written
+nothing it reads as *half working*. When it is not ~0, say the number in the README so
+the first real submit is measured against it.
+
 `selfcheck` failing means the statement was misread. Fix it there, or the user spends
 an hour debugging correct code against a wrong oracle. Step 4 is a prerequisite, not an
 ordering preference: with `tests/samples/` empty there is nothing to check against, and
 `selfcheck` fails rather than reporting a green it cannot justify.
 
-**The plumbing check is not optional.** `_check.py` is the main file with the algorithm
-actually written in — write it, run `selfcheck --entry _check.py`, delete it once
-green. That command scores `_check.py` through the real tests and checker and demands
-100%, *and* feeds every generated input to the main file itself and demands it not die.
-Neither half suffices: the first catches a wrong output shape, which no stub can
-demonstrate; the second catches a wrong parse in the file that actually ships.
+**The plumbing check is not optional.** `_check.<ext>` is a **copy of the main file**
+with the algorithm actually written in — same extension, because `--entry` goes to the
+same toolchain, so a C++ workspace wants `_check.cpp` and only a Python one wants
+`_check.py`. Copy it rather than writing a stand-in from scratch: a from-scratch one
+re-implements the parsing, and then the gate only proves it agrees with itself. Run
+`selfcheck --entry _check.cpp`, delete it once green. That command scores the stand-in
+through the real tests and checker and demands 100%, *and* feeds every generated input
+to the main file itself and demands it not die. Neither half suffices: the first
+catches a wrong output shape, which no stub can demonstrate; the second catches a wrong
+parse in the file that actually ships.
 
 Everything else here fails closed; this is the gap that failed open. A main file that
 reads a different format than `gen.py` writes, or prints a different shape than

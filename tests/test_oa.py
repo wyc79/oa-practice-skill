@@ -244,6 +244,34 @@ def test_no_corner_exempts_a_key_from_the_joint_maximum(ws):
     assert "corner exempt" in out(p)
 
 
+UNSATURATED = GEN.replace('yield "max", fmt([1000] * 100)',
+                          'yield "max", fmt([1000] * 99 + [5])')
+assert UNSATURATED != GEN, "the corner case in GEN has moved"
+
+
+def test_no_saturate_drops_the_hint(ws):
+    # The corner attains a_i's maximum but cannot hold every element there. The hint
+    # has no legal answer, so there has to be a way to say so.
+    write(ws / ".oa" / "gen.py", UNSATURATED)
+    assert "not saturated" in out(oa(ws, "gen", expect=0))
+
+    write(ws / ".oa" / "gen.py",
+          UNSATURATED.replace('"a_i": (-1000, 1000)}', '"a_i": (-1000, 1000, "no-saturate")}'))
+    p = oa(ws, "gen", expect=0)
+    assert "not saturated" not in out(p) and "saturation exempt" in out(p)
+
+
+def test_no_saturate_still_requires_the_joint_corner(ws):
+    # The whole point of it being weaker than no-corner: the maximum is still required
+    # to be attained somewhere, by a single test, alongside every other maximum.
+    src = GEN.replace('"a_i": (-1000, 1000)}', '"a_i": (-1000, 1000, "no-saturate")}')
+    src = src.replace('yield "max", fmt([1000] * 100)',
+                      'yield "nmax", fmt([1] * 100)\n    yield "vmax", fmt([1000, 1000])')
+    write(ws / ".oa" / "gen.py", src)
+    p = oa(ws, "gen", expect=2)
+    assert "joint max corner" in out(p) and "MISSING" in out(p)
+
+
 # ------------------------------------------------------------ the answer cache
 # tests/hidden is a cache of two expensive things. Both were once keyed on nothing
 # but existence, so an edit could be silently overridden and score a green nobody
@@ -622,3 +650,31 @@ def test_plumbing_refuses_the_workspaces_own_entry(ws):
 def test_plumbing_rejects_a_missing_file(ws):
     oa(ws, "answers", expect=0)
     assert "no such file" in out(oa(ws, "selfcheck", "--entry", "nope.py", expect=2))
+
+
+# --entry goes through the same build() as the entry file, so the stand-in the harness
+# asks for has to be one this workspace's toolchain accepts. The default language is
+# C++, where a hardcoded _check.py is a compile error rather than a gate. A run_cmd
+# workspace is stranger still: build() hands run_cmd back untouched, so --entry would
+# be ignored and the stub scored in its place.
+
+def foreign_entry(ws):
+    """An entry file the harness never compiles, driven by run_cmd. Lets both of these
+    be tested without a second toolchain on the machine."""
+    write(ws / "main.rs", "// never compiled: run_cmd runs main.py\n")
+    cfg(ws, entry="main.rs", run_cmd=[sys.executable, "main.py"])
+
+
+def test_the_stand_in_name_follows_the_entry_suffix(ws):
+    oa(ws, "answers", expect=0)
+    foreign_entry(ws)
+    p = oa(ws, "selfcheck", expect=1)
+    assert "_check.rs" in out(p) and "_check.py" not in out(p)
+
+
+def test_plumbing_refuses_to_redirect_a_custom_run_cmd(ws):
+    oa(ws, "answers", expect=0)
+    foreign_entry(ws)
+    write(ws / "_check.rs", "// stand-in\n")
+    p = oa(ws, "selfcheck", "--entry", "_check.rs", expect=2)
+    assert "run_cmd" in out(p)
