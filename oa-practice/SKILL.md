@@ -118,6 +118,17 @@ by running the reference collapses that into the reference agreeing with itself:
 passes every time, prints `consistent`, and proves nothing — while the workspace may be
 solving a subtly different problem than the one on the page.
 
+**Then go looking for what they don't cover.** These two or three files are the only
+external truth the workspace will ever have; every hidden answer past their reach is
+whatever `reference.py` says, unchallenged. Small is fine — *structurally narrow* is
+the problem. Write down the shapes `gen.py` is about to produce that no sample
+exercises (an exact multiple, an empty result, a single element, the tie-break, the
+leftover) and hand-work one of the gaps into `tests/samples/`, flagged in the README
+as yours. Two examples of `n = 5` with `k = 2` and `k = 3` never once make `n` a
+multiple of `k` — so the commonest off-by-one in that problem is invisible to both,
+and stays invisible right through `answers`. One hand-worked case kills it at
+`selfcheck`, before the slow pass has even run.
+
 ### 5. `.oa/ref/reference.py` — the brute force
 
 `solve(data: str) -> str` takes the whole input file, returns the whole output. Rewrite
@@ -131,6 +142,11 @@ largest generated case and divide by the CPython rate above. The 120 s default b
 the order of 10⁹. **Tune that budget down, not just up** — it is spent in full on every
 test the brute force cannot finish *before* `reference_fast` is tried, so five hopeless
 tests at the default is ten minutes of dead waiting in step 7.
+
+Nothing checks this file but step 4's samples. Past their reach it *is* the definition
+of correct: `answers` writes whatever it returns without complaint, and a misreading
+here is not a wrong answer the user can argue with — it is the answer. Step 7's
+`--entry` gate is the only other thing in the workspace that can contradict it.
 
 If it still can't answer the largest case, add `.oa/ref/reference_fast.py` with the
 intended algorithm; the harness cross-checks the two wherever the brute force finishes
@@ -205,22 +221,38 @@ an hour debugging correct code against a wrong oracle. Step 4 is a prerequisite,
 ordering preference: with `tests/samples/` empty there is nothing to check against, and
 `selfcheck` fails rather than reporting a green it cannot justify.
 
-**The plumbing check is not optional.** `_check.<ext>` is a **copy of the main file**
-with the algorithm actually written in — same extension, because `--entry` goes to the
-same toolchain, so a C++ workspace wants `_check.cpp` and only a Python one wants
-`_check.py`. Copy it rather than writing a stand-in from scratch: a from-scratch one
-re-implements the parsing, and then the gate only proves it agrees with itself. Run
-`selfcheck --entry _check.cpp`, delete it once green. That command scores the stand-in
+**The `--entry` gate is not optional, and it is not only about plumbing.** It is the
+one place a second implementation ever meets the suite, which makes it both the check
+on the main file's I/O *and* the only check on the answer key across every test no
+sample reaches — which is most of the ones that discriminate.
+
+`_check.<ext>` takes the entry file's extension, because `--entry` goes to the same
+toolchain: a C++ workspace wants `_check.cpp` and only a Python one wants `_check.py`.
+Build it in two halves, from two different places, and the split is the whole point:
+
+- **Plumbing — copy it** from the main file. Re-implementing the parsing means the gate only proves the stand-in agrees with *itself* about the format.
+- **Algorithm — re-derive it from the statement.** Never port `reference.py`. A port inherits whatever the reference misread, agrees with it on every test, scores 100%, and hands over a workspace whose answer key is wrong — the exact failure this gate exists to catch, walking straight through it.
+
+Run `selfcheck --entry _check.cpp`, delete it once green. It scores the stand-in
 through the real tests and checker and demands 100%, *and* feeds every generated input
 to the main file itself and demands it not die. Neither half suffices: the first
-catches a wrong output shape, which no stub can demonstrate; the second catches a wrong
-parse in the file that actually ships.
+catches a wrong output shape and a wrong answer key, neither of which a stub can
+demonstrate; the second catches a wrong parse in the file that actually ships.
+
+**Read which failure it reports**, because they send you to different files. *Every*
+test failing is a format mismatch — fix the main file. A *subset* failing means the
+stand-in and `reference.py` agree on the shape and disagree on the answer: one of them
+misread the statement, the samples cannot arbitrate because both already reproduce
+them, and the way out is to work a failing input by hand and see which file the
+hand-worked answer contradicts.
 
 Everything else here fails closed; this is the gap that failed open. A main file that
 reads a different format than `gen.py` writes, or prints a different shape than
 `reference.py` returns, turns every hidden test red at once — and from inside the
-workspace that is indistinguishable from a wrong algorithm. It is the one failure the
-user cannot debug, on a folder whose whole promise is that a red test means their code.
+workspace that is indistinguishable from a wrong algorithm. A wrong answer key is
+worse: it turns *some* tests red, which is indistinguishable from a nearly-right
+algorithm, and `judge` shows no diffs by design. Both are failures the user cannot
+debug, on a folder whose whole promise is that a red test means their code.
 
 ### 8. Hand it over
 

@@ -903,6 +903,10 @@ def execute(c, argv, tests, reveal, label):
     slowest = 0.0
     over = skipped = 0
     stats = []
+    # Which tests went red, not just how many. A wrong output shape fails every test
+    # at once while a wrong answer key fails a subset, so the *pattern* of failure is
+    # what tells the two apart — see check_plumbing.
+    failed = []
 
     # The first process launched pays cold-start cost none of the others do: loading
     # a just-compiled binary, resolving its DLLs, a first-touch antivirus scan. Here
@@ -939,14 +943,17 @@ def execute(c, argv, tests, reveal, label):
                 passed += 1
                 print(f"  {G}PASS{X} {name:<18} {used}")
                 continue
+            failed.append(name)
             explain = shown < reveal
             print(f"  {R}FAIL{X} {name:<18} {used}{f'  {DIM}{why}{X}' if explain else ''}")
             if explain:
                 show_failure(name, inp, exp, out, why)
                 shown += 1
         elif status == "TLE":
+            failed.append(name)
             print(f"  {Y}TLE {X} {name:<18} {DIM}>{c['time_limit_ms']} ms{X}")
         else:
+            failed.append(name)
             print(f"  {R}RE  {X} {name:<18} {DIM}{err.strip().splitlines()[0] if err.strip() else ''}{X}")
             if shown < reveal:
                 print(f"{R}{err.strip()[:2000]}{X}")
@@ -955,7 +962,7 @@ def execute(c, argv, tests, reveal, label):
     if not total:
         print(f"\n{R}{B}{label}: nothing to score{X} — every test was skipped for want "
               f"of an expected output")
-        return 0, 0, stats
+        return 0, 0, stats, failed
 
     timing = (f"slowest {slowest:.0f} ms" if slowest else "nothing finished")
     timing += f" / limit {c['time_limit_ms']} ms" + (f", {over} over it" if over else "")
@@ -964,7 +971,7 @@ def execute(c, argv, tests, reveal, label):
     pct = 100.0 * passed / total
     bar = G if passed == total else (Y if passed else R)
     print(f"\n{bar}{B}{label}: {passed}/{total} ({pct:.0f}%){X}   {DIM}{timing}{X}")
-    return passed, total, stats
+    return passed, total, stats, failed
 
 
 def check_against_samples(c, path, title):
@@ -1004,6 +1011,80 @@ def check_against_samples(c, path, title):
         return 1
     print(f"  {(R + B + 'MISMATCH') if bad else (G + B + 'consistent')}{X} {DIM}({checked} samples){X}")
     return bad
+
+
+def answer_key_report(c):
+    """Where the answers came from, and how much of the suite that actually covers.
+
+    The samples are the only truth the harness did not generate itself, and a
+    statement's examples are small by nature — so the answers to the tests that do the
+    discriminating rest on reference.py being right about shapes no sample exercises.
+    Nothing here can prove that it is. What this can do is say how wide the gap is,
+    using the quantities LIMITS already declares, and name the one gate that closes it.
+
+    A disclosure, never a gate: no statement ships a max-size example, so failing on
+    an unsampled range would fail every workspace ever built. It prints what it knows
+    and lets the author decide, which is the same bargain the scaling report makes.
+    """
+    hid = [(f.stem, read(f)) for f in sorted(HIDDEN.glob("*.in"))
+           if f.with_suffix(".out").exists()]
+    if not hid:
+        return
+    samp = [(n, i) for n, i, e in samples() if e is not None]
+
+    print(f"\n{B}Answer key{X}")
+    if FAST.exists():
+        print(f"  {DIM}{len(samp)} samples are the only external ground truth. "
+              f"{len(hid)} hidden answers come\n  from .oa/ref/, where two independent "
+              f"references cross-check each other.{X}")
+    else:
+        print(f"  {DIM}{len(samp)} samples are the only external ground truth. "
+              f"{len(hid)} hidden answers come\n  from .oa/ref/reference.py alone.{X}")
+
+    gen = load_module(ROOT / ".oa" / "gen.py", "oa_gen")
+    lim = getattr(gen, "LIMITS", None)
+    measure = getattr(gen, "measure", None)
+
+    def span(tests):
+        """Range of each declared quantity actually present in these inputs."""
+        got = {}
+        for _, data in tests:
+            try:
+                m = measure(data)
+            except Exception:
+                # measure() is written against generated inputs; a sample it chokes on
+                # is worth neither a crash nor a diagnosis here. Coverage owns that.
+                continue
+            for k, v in m.items():
+                if k not in lim:
+                    continue
+                vals = [v] if isinstance(v, (int, float)) else list(v)
+                if not vals:
+                    continue
+                lo, hi = got.get(k, (vals[0], vals[0]))
+                got[k] = (min(lo, min(vals)), max(hi, max(vals)))
+        return got
+
+    if lim and measure:
+        s, t = span(samp), span(hid)
+        w = max(len(k) for k in lim)
+        gaps = []
+        for k in lim:
+            tv = t.get(k)
+            if tv is None:
+                continue
+            sv = s.get(k)
+            reach = f"{sv[0]} .. {sv[1]}" if sv else "never reached"
+            print(f"  {k:<{w}}  {DIM}samples{X} {reach:<18}  {DIM}tests{X} {tv[0]} .. {tv[1]}")
+            if sv is None or sv[0] > tv[0] or sv[1] < tv[1]:
+                gaps.append(k)
+        if gaps:
+            print(f"  {Y}outside the sampled range of {', '.join(gaps)} nothing has checked "
+                  f"the\n  answers against the statement{X}")
+
+    print(f"  {DIM}selfcheck --entry is what covers that, and only if the stand-in's "
+          f"algorithm was\n  re-derived from the statement — a port of reference.py shares "
+          f"its mistakes,\n  agrees with it everywhere, and scores 100%.{X}")
 
 
 def survives_inputs(c, argv, tests):
@@ -1163,14 +1244,34 @@ def check_plumbing(c, entry):
         return bad + 1
 
     print(f"  {DIM}scoring {rel} — a correct solution through the real tests and checker{X}")
-    passed, total, _ = execute(c, build({**c, "entry": str(rel)}), scored, 1, "Plumbing")
+    passed, total, _, failing = execute(c, build({**c, "entry": str(rel)}), scored,
+                                        1, "Plumbing")
     if passed == total and total:
-        print(f"  {DIM}output shape agrees with the reference, and a correct solution fits the"
-              f"\n  time limit. Delete {rel}.{X}")
+        print(f"  {DIM}output shape agrees with the answer key, and a correct solution fits"
+              f"\n  the time limit. Delete {rel}.{X}")
         return bad
-    print(f"\n{R}{B}the workspace is broken, not the solution{X} — a correct solution scored\n"
-          f"  {passed}/{total}. Reconcile {c['entry']}'s parsing and printing against the format\n"
-          f"  .oa/gen.py emits and the shape .oa/ref/reference.py returns, then rerun.")
+
+    # Which failed matters as much as how many, and the two cases send the author to
+    # different files. A format mismatch is systematic: the stand-in and the reference
+    # disagree about what an answer *looks like*, so nothing can match and everything
+    # goes red. A subset going red means they agree on the shape and disagree on the
+    # value — the algorithms differ, and the samples cannot arbitrate because both
+    # already reproduce them.
+    if passed == 0:
+        print(f"\n{R}{B}the workspace is broken, not the solution{X} — a correct solution "
+              f"scored\n  0/{total}. Every test failed, which is what a *format* mismatch "
+              f"looks like:\n  reconcile {c['entry']}'s parsing and printing against the format "
+              f".oa/gen.py\n  emits and the shape .oa/ref/reference.py returns, then rerun.")
+    else:
+        shown = ", ".join(failing[:5])
+        more = f", +{len(failing) - 5} more" if len(failing) > 5 else ""
+        print(f"\n{R}{B}the answer key and the stand-in disagree{X} — a correct solution "
+              f"scored\n  {passed}/{total}, failing {shown}{more}.")
+        print(f"  {DIM}A wrong output shape fails every test at once. A subset failing means "
+              f"these\n  two agree on the shape and disagree on the answer, so one of "
+              f".oa/ref/reference.py\n  and {rel} has misread the statement — and the samples "
+              f"cannot say which, since\n  both already reproduce them. Work the failing inputs "
+              f"by hand; whichever file\n  the hand-worked answer contradicts is the wrong one.{X}")
     return bad + 1
 
 
@@ -1217,6 +1318,7 @@ def selfcheck(c, entry=None):
     if c["checker"] == "custom":
         print(f"\n{B}Checker{X} {DIM}— does .oa/checker.py ever say no?{X}")
         bad += check_checker(c, [t for t in samples() + hidden() if t[2] is not None])
+    answer_key_report(c)
     bad += check_plumbing(c, entry)
     return 1 if bad else 0
 
@@ -1266,7 +1368,7 @@ def main():
         # is printed in the statement and sitting in tests/samples/*.out, so there is
         # nothing here to give away — and "Run Code" that will not show you why a
         # sample failed is the one button on a real OA that always does.
-        p, t, _ = execute(c, argv, ts, len(ts) if a.reveal is None else a.reveal, "Samples")
+        p, t, _, _ = execute(c, argv, ts, len(ts) if a.reveal is None else a.reveal, "Samples")
         # `and t`: a suite that scored nothing has not passed, and p == t == 0 would
         # otherwise exit 0 and read as green.
         sys.exit(0 if p == t and t else 1)
@@ -1277,7 +1379,7 @@ def main():
             die(f"no such test {a.name!r}; have: {', '.join(sorted(pool))}")
         # Naming a test is an explicit request to see it, so `case` explains by default
         # where `judge` does not. This is the deliberate way past the score-only wall.
-        p, t, _ = execute(c, argv, [pool[a.name]], 1 if a.reveal is None else a.reveal, "Case")
+        p, t, _, _ = execute(c, argv, [pool[a.name]], 1 if a.reveal is None else a.reveal, "Case")
         sys.exit(0 if p == t and t else 1)
 
     # judge
@@ -1291,7 +1393,7 @@ def main():
     # Submit returns a score. The expected output of a hidden test *is* the answer, so
     # a real OA hands back a percentage and leaves you to work out which case broke you
     # — and a harness that volunteers the diff has quietly turned Submit into Run.
-    p, t, stats = execute(c, argv, ts, 0 if a.reveal is None else a.reveal, "Score")
+    p, t, stats, _ = execute(c, argv, ts, 0 if a.reveal is None else a.reveal, "Score")
     if p == t and t:
         complexity_report(c, stats)
     elif a.reveal is None:

@@ -628,7 +628,95 @@ def test_plumbing_catches_a_wrong_output_shape(ws):
     oa(ws, "answers", expect=0)
     write(ws / "_check.py", MAIN.replace("print(solve(", "print('sum =', solve("))
     p = oa(ws, "selfcheck", "--entry", "_check.py", expect=1)
-    assert "the workspace is broken, not the solution" in out(p)
+    text = out(p)
+    assert "the workspace is broken, not the solution" in text
+    # Everything red is the signature of a format mismatch, so the author gets sent to
+    # the entry file rather than made to hunt through the reference.
+    assert "format" in text and "main.py" in text
+
+
+# ------------------------------------------------------------- the answer key
+# The samples are the only external ground truth in the workspace, and they are small.
+# Past their reach reference.py *is* the definition of correct, so a misreading it
+# shares with nothing else writes itself into every hidden answer unchallenged. The
+# --entry gate is the only thing that can contradict it — and only when the stand-in's
+# algorithm came from the statement rather than from a port of the reference.
+
+# Agrees with both samples (n = 3 and n = 0) and wrong from n >= 4 up, so the answer
+# key is wrong on a subset of the suite and right on everything with ground truth.
+BIASED = REF.replace("return str(sum(int(x) for x in t[1:1 + n]))",
+                     "return str(sum(int(x) for x in t[1:1 + n]) + (1 if n >= 4 else 0))")
+assert BIASED != REF, "REF's return has moved"
+
+
+def test_a_reference_wrong_past_the_samples_still_passes_selfcheck(ws):
+    # The premise of everything below: sample agreement is not answer-key correctness,
+    # and the sample gate has no way to notice on its own. It reports `consistent`,
+    # which is true of the two tests it can see and says nothing about the other seven.
+    write(ws / ".oa" / "ref" / "reference.py", BIASED)
+    assert "consistent" in out(oa(ws, "selfcheck", expect=0))
+
+
+def test_plumbing_blames_the_reference_when_only_a_subset_fails(ws):
+    # A wrong output shape fails everything at once; this fails some. That difference
+    # is the whole diagnosis, and getting it wrong sends the author to reconcile
+    # parsing in a file whose parsing is fine.
+    write(ws / ".oa" / "ref" / "reference.py", BIASED)
+    oa(ws, "answers", expect=0)
+    write(ws / "_check.py", MAIN)
+    text = out(oa(ws, "selfcheck", "--entry", "_check.py", expect=1))
+    assert "answer key and the stand-in disagree" in text
+    assert "reference.py" in text
+    assert "the workspace is broken" not in text
+
+
+def test_a_stand_in_sharing_the_references_bug_scores_full_marks(ws):
+    # The hole no harness can close: two implementations of the same misreading agree
+    # everywhere, so the gate reports 100% over an answer key that is wrong. It is
+    # pinned here because the only defence is the instruction to re-derive the
+    # stand-in's algorithm, and a silent regression would take that instruction's
+    # justification with it.
+    write(ws / ".oa" / "ref" / "reference.py", BIASED)
+    oa(ws, "answers", expect=0)
+    write(ws / "_check.py", MAIN.replace(
+        "return sum(a)", "return sum(a) + (1 if len(a) >= 4 else 0)"))
+    assert "100%" in out(oa(ws, "selfcheck", "--entry", "_check.py", expect=0))
+
+
+def test_answer_key_names_its_only_ground_truth(ws):
+    oa(ws, "answers", expect=0)
+    write(ws / "_check.py", MAIN)
+    text = out(oa(ws, "selfcheck", "--entry", "_check.py", expect=0))
+    assert "Answer key" in text
+    assert "reference.py alone" in text
+
+
+def test_answer_key_reports_the_range_the_samples_never_reach(ws):
+    # Samples run to n = 3; the suite runs to n = 100. Everything that discriminates
+    # lives in the gap, and the report has to say so rather than let a green selfcheck
+    # imply the answers were checked.
+    oa(ws, "answers", expect=0)
+    write(ws / "_check.py", MAIN)
+    text = out(oa(ws, "selfcheck", "--entry", "_check.py", expect=0))
+    assert "0 .. 100" in text
+    assert "outside the sampled range" in text and "n" in text
+
+
+def test_answer_key_notes_when_two_references_cross_check(ws):
+    write(ws / ".oa" / "ref" / "reference_fast.py", REF)
+    oa(ws, "answers", expect=0)
+    write(ws / "_check.py", MAIN)
+    text = out(oa(ws, "selfcheck", "--entry", "_check.py", expect=0))
+    assert "cross-check" in text and "reference.py alone" not in text
+
+
+def test_answer_key_survives_a_workspace_without_limits(ws):
+    src = GEN.replace("LIMITS =", "_LIMITS =").replace("def measure(data):", "def _m(data):")
+    write(ws / ".oa" / "gen.py", src)
+    oa(ws, "answers", expect=0)
+    write(ws / "_check.py", MAIN)
+    text = out(oa(ws, "selfcheck", "--entry", "_check.py", expect=0))
+    assert "Answer key" in text and "ground truth" in text
 
 
 def test_plumbing_catches_an_entry_that_dies_on_generated_input(ws):

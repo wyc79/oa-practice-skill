@@ -334,20 +334,38 @@ discards all of them, because there is no knowing which it would have changed, a
 answers the current oracle disagrees with grade the user against a solution nobody is
 running. `selfcheck` refuses to pass on a stale cache.
 
-`selfcheck --entry <file>` is the plumbing gate: it scores `<file>` — a known-correct
-stand-in for the main file — through the real tests and checker and demands 100%, and
-separately feeds every generated input to the real entry and demands it not die.
-Without `--entry` it reports the output shape as unchecked and fails, once there are
-answers to check against. SKILL.md step 7 has why it is not optional.
+`selfcheck --entry <file>` is the second-implementation gate: it scores `<file>` — a
+known-correct stand-in for the main file — through the real tests and checker and
+demands 100%, and separately feeds every generated input to the real entry and demands
+it not die. Without `--entry` it reports the output shape as unchecked and fails, once
+there are answers to check against. SKILL.md step 7 has why it is not optional.
+
+It is the only thing in the workspace that can contradict `reference.py`, so it is
+carrying the answer key as well as the plumbing. Which failure it reports says which:
+every scored test failing is a format mismatch and the fix is in the entry file; a
+subset failing means the stand-in and the reference agree on the shape of an answer
+and disagree on its value, and the samples cannot arbitrate because both reproduce
+them. The harness prints them as two different messages for that reason.
 
 The stand-in shares the entry file's extension, because `--entry` goes through the same
 `build()` and so to the same toolchain: `_check.cpp` for the default C++ workspace,
-`_check.py` for a Python one. It is a *copy* of the main file with the algorithm filled
-in — write one from scratch and it re-implements the parsing, which is the half of the
-plumbing the gate was supposed to be checking. A workspace driven by `build_cmd` /
-`run_cmd` cannot use `--entry` at all: those name their own files, so the stand-in
-would be ignored and the stub scored in its place. `selfcheck` says so rather than
-reporting the stub's score; point `run_cmd` at the stand-in for the length of the check.
+`_check.py` for a Python one. Its two halves come from different places, and mixing
+that up costs the gate its point:
+
+- *Plumbing*: a **copy** of the main file. Written from scratch it re-implements the parsing, which is the half of the plumbing the gate was supposed to be checking.
+- *Algorithm*: **re-derived from the statement**, never ported from `reference.py`. A port shares the reference's misreadings, so it agrees on every test and scores 100% over an answer key that is wrong.
+
+A workspace driven by `build_cmd` / `run_cmd` cannot use `--entry` at all: those name
+their own files, so the stand-in would be ignored and the stub scored in its place.
+`selfcheck` says so rather than reporting the stub's score; point `run_cmd` at the
+stand-in for the length of the check.
+
+`selfcheck` also prints an **Answer key** block: how many samples back the suite, how
+many answers rest on `reference.py` alone, and — from `LIMITS` and `measure` — the
+range of each declared quantity the samples reach against the range the tests reach.
+It never fails on a gap there, because no statement ships a max-size example and a gate
+that failed on one would fail every workspace ever built. It is a disclosure, in the
+same spirit as the scaling report declining an exponent it cannot stand behind.
 
 `--reveal N` explains the first N failures and no more, where "explains" covers the
 one-line reason as well as the input/expected/actual block — `token 0: got '0', want
