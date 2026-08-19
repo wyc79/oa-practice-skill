@@ -325,5 +325,5 @@ verified in step 7 was the harness agreeing with itself.
 ## Reference
 
 - `references/authoring.md` — parsing patterns, generator recipes per problem family, checker examples, `problem.json` fields.
-- `assets/harness/` — the template files scaffold copies.
+- `assets/harness/` — the template files scaffold copies. `oa-internal/` there is what lands as `.oa/` in the workspace: dot-entries do not survive skill packaging, so scaffold renames it on the way out.
 - `assets/stubs/` — solution stubs per language.

@@ -142,6 +142,26 @@ def ws(raw):
     return raw
 
 
+# ------------------------------------------------------------------- packaging
+# Skill packaging drops dot-entries: an installed copy of the skill arrives with no
+# assets/harness/.oa at all, and the workspace it stamps out has no generator, no
+# references and no python-path. So the template carries them undotted and scaffold
+# renames them on the way out. An asset that drifts back to a dotted name works from
+# a git clone and breaks for everyone who installed the skill instead.
+
+def test_assets_carry_no_dot_entries():
+    dotted = sorted(str(p.relative_to(REPO))
+                    for p in (REPO / "oa-practice" / "assets").rglob(".*"))
+    assert dotted == [], f"these will not survive packaging: {dotted}"
+
+
+def test_scaffold_dots_the_internal_directory(raw):
+    assert (raw / ".oa" / "gen.py").exists()
+    assert (raw / ".oa" / "ref" / "reference.py").exists()
+    assert (raw / ".oa" / "python-path").exists()
+    assert not (raw / "oa-internal").exists()
+
+
 # ------------------------------------------------------- the template must block
 # The scaffold ships a *working* generator and reference for a different problem.
 # Left in place they produce a green suite that grades nothing anyone asked about,

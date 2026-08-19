@@ -23,6 +23,12 @@ HERE = Path(__file__).resolve().parent.parent
 HARNESS = HERE / "assets" / "harness"
 STUBS = HERE / "assets" / "stubs"
 
+# Dot-entries do not survive skill packaging — a synced or installed copy of this skill
+# simply arrives without them — so the template keeps its dotted paths under undotted
+# names and they are renamed back into place once copied. Anything a workspace needs to
+# see as a dotfile goes in this table rather than into assets/ under its real name.
+DOTTED = {"oa-internal": ".oa"}
+
 
 def write(path, text):
     """LF regardless of platform, so a workspace scaffolded on Windows is
@@ -45,6 +51,11 @@ def main():
     # Ignore __pycache__: running any harness file in the template directory leaves
     # one behind, and copytree would otherwise stamp it into every new workspace.
     shutil.copytree(HARNESS, dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    for packaged, dotted in DOTTED.items():
+        if not (dest / packaged).exists():
+            raise SystemExit(
+                f"missing {HARNESS / packaged} — the skill's assets are incomplete")
+        (dest / packaged).rename(dest / dotted)
 
     entry = {"cpp": "main.cpp", "python": "main.py"}[a.lang]
     stub = STUBS / entry

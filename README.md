@@ -91,6 +91,7 @@ oa-practice/              # <- this is the skill; copy this into ~/.claude/skill
 ├── scripts/scaffold.py   # stamps out a new problem folder
 └── assets/
     ├── harness/          # oa.py and the run/judge/oa wrappers
+    │   └── oa-internal/  # lands as .oa/ — dot-entries don't survive packaging
     └── stubs/            # main.cpp, main.py
 tests/                    # harness test suite — repo scaffolding, not installed
 README.md  LICENSE        # repo scaffolding, not part of the skill
