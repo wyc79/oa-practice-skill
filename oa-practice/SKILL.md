@@ -314,6 +314,14 @@ yourself before handing over so the user never waits.
 **Follow-up problems**: scaffold each into its own folder under the same parent. Reuse
 the harness — only `main`, samples, `ref/`, and `gen.py` change.
 
+**Catalogue repos**: when the parent is a problem bank with a root README or index —
+a table of problems — finish by appending a row for the new folder: title, link to
+the folder, topic, language, source, date added, and a status column left
+`unsolved`. Match the columns the table already has rather than the list here. Never
+flip that status yourself: it tracks the user, not the workspace, and the only thing
+that moves it off `unsolved` is their own first `judge` at 100%. Everything you
+verified in step 7 was the harness agreeing with itself.
+
 ## Reference
 
 - `references/authoring.md` — parsing patterns, generator recipes per problem family, checker examples, `problem.json` fields.
