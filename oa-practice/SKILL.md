@@ -366,10 +366,13 @@ again. It refuses while the current file is neither the stub nor already in
 `solutions/`, because an unarchived solve is the one thing in the folder that cannot
 be regenerated; `wipe --force` is how you say throw it away anyway.
 
-A problem-bank repo usually gitignores the entry file itself — `main.cpp` / `main.py`
-— so what git holds is clean workspaces plus everyone's `solutions/`, and cloning it
-hands over the problem rather than the answer. `.oa/stub.<ext>` is committed, so a
-fresh clone materializes its entry file with `./oa.sh wipe` (or by scaffolding again).
+In a problem-bank repo the entry file is committed like everything else, which is what
+makes an attempt in progress follow the user between machines — and `wipe` is then the
+deliberate way to start cold on a fresh device, or in a fresh mood, rather than
+something a clone does to them by accident. Gitignoring `main.cpp` / `main.py` is the
+alternative, for a repo meant to hold only clean workspaces plus everyone's
+`solutions/`; `.oa/stub.<ext>` is committed either way, so a clone with no entry file
+gets one from `./oa.sh wipe`.
 
 **Follow-up problems**: scaffold each into its own folder under the same parent. Reuse
 the harness — only `main`, samples, `ref/`, and `gen.py` change.

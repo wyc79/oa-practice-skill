@@ -15,7 +15,7 @@ reason.
 ├── README.md         # what the repo is and how to work a problem — static
 ├── CATALOGUE.md      # one row per problem — the only file that grows
 ├── .gitattributes    # CRLF for .cmd, LF for everything the harness reads
-├── .gitignore        # entry files and .env
+├── .gitignore        # the review key, and not much else
 ├── .env.example      # the review key names, so nobody has to guess the spelling
 └── <slug>/           # one scaffolded workspace per problem
 ```
@@ -64,10 +64,9 @@ A `judge` that scores 100% files your solution under `<slug>/solutions/` as
 while what you have is neither the stub nor something already archived, so nothing you
 have not saved can be lost; `wipe --force` overrides that.
 
-The entry files — `main.cpp`, `main.py` — are gitignored, so what this repo holds is
-clean workspaces plus everyone's `solutions/`. **A fresh clone has no entry file**:
-run `./oa.sh wipe` in a problem folder to materialize one from the committed
-`.oa/stub.<ext>`.
+Your entry files are committed, so an attempt you left half-finished is waiting for you
+on the next machine you clone this to. When you want a problem cold again — a fresh
+clone, or a month later — `./oa.sh wipe` is the way to ask for it.
 
 That first 100% also flips this problem's row in [CATALOGUE.md](CATALOGUE.md) from
 `unsolved` to `solved <date>`; later passes leave the date alone, because it records
@@ -143,12 +142,6 @@ produce different bytes on Windows than on macOS.
 Append these to whatever is already there.
 
 ```
-# The entry files are the user's own attempt. Keeping them out means the repo holds
-# problems rather than answers, and a clone hands you the work instead of the result.
-# `./oa.sh wipe` materializes one from the committed .oa/stub.<ext>.
-main.cpp
-main.py
-
 # The LLM review key. Never committed — .env.example, which is only the names, is.
 .env
 
@@ -156,9 +149,15 @@ __pycache__/
 *.pyc
 ```
 
-`solutions/` is **not** ignored — the archive is the point of the repo. Neither is
-`.oa/`, which has to travel: it carries the generator, the references, and the stub
-that `wipe` restores from.
+Short on purpose. `solutions/` is **not** ignored — the archive is the point of the
+repo. Neither is `.oa/`, which has to travel: it carries the generator, the references,
+and the stub that `wipe` restores from. Nor are the entry files: committing `main.cpp`
+and `main.py` is what lets a half-finished attempt follow the user to another machine,
+and `./oa.sh wipe` is how they choose to start cold instead.
+
+Add `main.cpp` and `main.py` here only if they want the opposite — a repo holding clean
+workspaces plus `solutions/`, where a clone has no entry file until `wipe` writes one
+from the committed stub.
 
 ## .env.example
 
@@ -182,11 +181,13 @@ and a template naming a variable the harness does not read is worse than no temp
 
 ## Before handing it over
 
-- `git check-ignore -v <slug>/main.py` names the `.gitignore` line — the entry file is
-  really ignored, not merely absent from `git status` because it is already tracked.
-  If it *is* already tracked, `git rm --cached` it, or the ignore rule does nothing.
-- `git status` in a solved folder shows `solutions/` as untracked-and-addable, not
-  ignored.
+- `git check-ignore -v .env` names the `.gitignore` line, and `.env.example` is *not*
+  ignored — the names are meant to travel, only the values stay home.
+- `git status` in a solved folder shows `solutions/` and the entry file as
+  untracked-and-addable, not ignored.
+- Only if they chose to ignore entry files: `git check-ignore -v <slug>/main.py` names
+  the line, and the file is not already tracked — an ignore rule does nothing to a
+  tracked file until `git rm --cached` takes it out of the index.
 - The CATALOGUE table has no topic column, and its `Category` / `Notes` columns are
   empty.
 - The README's placeholders are filled in.
