@@ -27,9 +27,11 @@ separate request and fine to fulfill.
 ├── oa.sh, oa.cmd       # any other harness command, same interpreter probe
 ├── oa.py               # harness engine (run / judge / gen / answers / case / selfcheck)
 ├── tests/samples/      # sample1.in, sample1.out, sample2.in, ...
+├── solutions/          # every attempt that scored 100%, filed by judge
 └── .oa/
     ├── gen.py          # declared constraint bounds + edge cases + randoms + stress
     ├── checker.py      # only when multiple outputs are valid
+    ├── stub.cpp/.py    # the untouched stub, so `wipe` can hand the problem back
     └── ref/            # SPOILERS — one level down so they are not sitting in the way
         ├── reference.py       # brute force: the oracle
         └── reference_fast.py  # intended algorithm; only when brute can't reach the limits
@@ -261,6 +263,7 @@ Present the folder and keep it short:
 ```
 ./run.sh      # samples                          (Windows: .\run.cmd)
 ./judge.sh    # submit — scores you on 24 tests   (Windows: .\judge.cmd)
+./oa.sh wipe  # start over from the stub          (Windows: .\oa.cmd wipe)
 ```
 
 The `.\` matters: neither PowerShell nor `cmd /c` runs a batch file from the current
@@ -311,6 +314,19 @@ never sees a stray `\r`. Three caveats:
 `answers`, which is a separate resumable command for exactly that reason. Run it
 yourself before handing over so the user never waits.
 
+**The redo loop**: a 100% `judge` copies the entry file into `solutions/` as
+`solution-<date>-<time>.<ext>`, and skips it when an equivalent one is already there —
+whitespace is ignored, so re-running a formatter does not file a second copy.
+`./oa.sh wipe` then restores the stub from `.oa/stub.<ext>` and the problem is cold
+again. It refuses while the current file is neither the stub nor already in
+`solutions/`, because an unarchived solve is the one thing in the folder that cannot
+be regenerated; `wipe --force` is how you say throw it away anyway.
+
+A problem-bank repo usually gitignores the entry file itself — `main.cpp` / `main.py`
+— so what git holds is clean workspaces plus everyone's `solutions/`, and cloning it
+hands over the problem rather than the answer. `.oa/stub.<ext>` is committed, so a
+fresh clone materializes its entry file with `./oa.sh wipe` (or by scaffolding again).
+
 **Follow-up problems**: scaffold each into its own folder under the same parent. Reuse
 the harness — only `main`, samples, `ref/`, and `gen.py` change.
 
@@ -321,6 +337,10 @@ the folder, topic, language, source, date added, and a status column left
 flip that status yourself: it tracks the user, not the workspace, and the only thing
 that moves it off `unsolved` is their own first `judge` at 100%. Everything you
 verified in step 7 was the harness agreeing with itself.
+
+Setting one of these up from scratch, the root `.gitignore` wants two more lines
+beyond the usual: `main.cpp` / `main.py`, so the repo holds problems rather than
+answers (see the redo loop above), and `.env`, which is never committed.
 
 ## Reference
 

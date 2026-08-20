@@ -1,6 +1,6 @@
 @echo off
 rem Any harness command, with the interpreter probe run.cmd/judge.cmd use:
-rem   .\oa.cmd gen ^| answers ^| selfcheck ^| case ^<name^> ^| run ^| judge
+rem   .\oa.cmd gen ^| answers ^| selfcheck ^| case ^<name^> ^| wipe ^| run ^| judge
 rem run.cmd and judge.cmd are the two buttons; this is everything else.
 setlocal
 cd /d "%~dp0"

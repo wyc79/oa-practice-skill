@@ -786,3 +786,89 @@ def test_plumbing_refuses_to_redirect_a_custom_run_cmd(ws):
     write(ws / "_check.rs", "// stand-in\n")
     p = oa(ws, "selfcheck", "--entry", "_check.rs", expect=2)
     assert "run_cmd" in out(p)
+
+
+# ------------------------------------------------------- the redo loop
+# A 100% judge files the entry file under solutions/; wipe puts the stub back. The
+# rule tying them together is that wipe never destroys an attempt the archive has not
+# already seen — every test below is about that rule holding.
+
+def solutions(ws):
+    return sorted(p.name for p in (ws / "solutions").glob("*.py"))
+
+
+def test_scaffold_saves_a_pristine_stub(raw):
+    stub = raw / ".oa" / "stub.py"
+    assert stub.exists()
+    assert stub.read_text() == (raw / "main.py").read_text()
+
+
+def test_a_hundred_percent_judge_archives_the_entry_file(ws):
+    oa(ws, "judge", expect=0)
+    assert len(solutions(ws)) == 1
+    assert (ws / "solutions" / solutions(ws)[0]).read_text() == MAIN
+
+
+def test_a_failing_judge_archives_nothing(ws):
+    write(ws / "main.py", MAIN.replace("sum(", "1 + sum("))
+    oa(ws, "judge", expect=1)
+    assert solutions(ws) == []
+
+
+def test_a_reformatted_solution_is_not_archived_twice(ws):
+    oa(ws, "judge", expect=0)
+    first = solutions(ws)
+    # Same code, run through something that moved the whitespace around. The archive
+    # is a record of attempts, and a reformat is not one.
+    write(ws / "main.py", MAIN.replace("\n", "\n\n").replace("    ", "\t"))
+    p = oa(ws, "judge", expect=0)
+    assert solutions(ws) == first
+    assert "already archived" in out(p)
+
+
+def test_a_genuinely_different_solution_is_archived_alongside(ws):
+    oa(ws, "judge", expect=0)
+    other = MAIN.replace("return sum(a)", "return sum(x for x in a)")
+    assert other != MAIN
+    write(ws / "main.py", other)
+    oa(ws, "judge", expect=0)
+    assert len(solutions(ws)) == 2
+
+
+def test_wipe_restores_the_stub_once_the_attempt_is_archived(ws):
+    oa(ws, "judge", expect=0)
+    p = oa(ws, "wipe", expect=0)
+    assert (ws / "main.py").read_text() == (ws / ".oa" / "stub.py").read_text()
+    assert "solutions/solution-" in out(p).replace("\\", "/")
+
+
+def test_wipe_refuses_an_unarchived_attempt(ws):
+    p = oa(ws, "wipe", expect=2)
+    assert "not in solutions/" in out(p)
+    assert (ws / "main.py").read_text() == MAIN
+
+
+def test_wipe_force_discards_an_unarchived_attempt(ws):
+    oa(ws, "wipe", "--force", expect=0)
+    assert (ws / "main.py").read_text() == (ws / ".oa" / "stub.py").read_text()
+    assert solutions(ws) == []
+
+
+def test_wipe_on_an_untouched_stub_is_harmless(raw):
+    p = oa(raw, "wipe", expect=0)
+    assert "already the stub" in out(p)
+
+
+def test_wipe_needs_the_saved_stub(ws):
+    oa(ws, "judge", expect=0)
+    (ws / ".oa" / "stub.py").unlink()
+    assert "stub.py" in out(oa(ws, "wipe", expect=2))
+
+
+def test_wipe_does_not_need_a_compilable_entry(ws):
+    # The moment you most want to start over is when what you have does not build.
+    # wipe runs before build(), so a broken entry file is not a reason it can refuse.
+    oa(ws, "judge", expect=0)
+    write(ws / "main.py", "this is not python(")
+    oa(ws, "wipe", "--force", expect=0)
+    assert (ws / "main.py").read_text() == (ws / ".oa" / "stub.py").read_text()

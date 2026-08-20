@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Any harness command, with the interpreter probe run.sh/judge.sh use:
-#   ./oa.sh gen | answers | selfcheck | case <name> | run | judge   (Windows: oa.cmd)
+#   ./oa.sh gen | answers | selfcheck | case <name> | wipe | run | judge  (Win: oa.cmd)
 #
 # run.sh and judge.sh are the two buttons; this is everything else, and it exists so
 # the authoring steps are not the ones that assume `python3` resolves to a Python 3.

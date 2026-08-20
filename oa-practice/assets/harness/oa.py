@@ -9,6 +9,7 @@ Usage (or ./oa.sh <cmd> / .\oa.cmd <cmd>, which find a working interpreter first
     python3 oa.py case <name>      # run one test, show input/expected/actual
     python3 oa.py selfcheck        # references vs samples, coverage, staleness
     python3 oa.py selfcheck --entry _check.cpp  # ...and the entry file's I/O
+    python3 oa.py wipe             # entry file back to the stub, to solve it again
 
 `run` explains every failing sample; `judge` explains none, because the expected
 output of a hidden test is the answer. `--reveal N` overrides either way.
@@ -16,6 +17,9 @@ output of a hidden test is the answer. `--reveal N` overrides either way.
 The `--entry` stand-in carries the entry file's extension, because it goes through the
 same build() and so to the same toolchain: `_check.cpp` for the default C++ workspace,
 `_check.py` for a Python one.
+
+A 100% `judge` files the entry file away under solutions/, which is what makes `wipe`
+safe to run: it refuses to overwrite an attempt the archive has not already seen.
 
 Config lives in problem.json. Hidden generator lives in .oa/, reference solutions
 in .oa/ref/.
@@ -43,6 +47,7 @@ BRUTE = REF_DIR / "reference.py"
 FAST = REF_DIR / "reference_fast.py"
 RUNNER = REF_DIR / "_runner.py"
 HIDDEN = ROOT / "tests" / "hidden"
+SOLUTIONS = ROOT / "solutions"
 TIMINGS = "_timings.json"
 STAMP = "_stamp.json"
 
@@ -744,6 +749,97 @@ def hidden():
     return out
 
 
+# ------------------------------------------------------- solutions archive
+# The redo loop: solve it, score 100%, let `judge` file the attempt away, `wipe` back
+# to the stub, solve it again cold in a week. What makes that safe is the rule that
+# `wipe` never destroys an attempt the archive has not already seen.
+
+def entry_ext(c):
+    return Path(c["entry"]).suffix
+
+
+def stub_file(c):
+    return ROOT / ".oa" / f"stub{entry_ext(c)}"
+
+
+def squashed(text):
+    """Every whitespace character removed. Two files that differ only in indentation,
+    line breaks or a reformat are the same solution for archiving purposes — the
+    archive is a record of attempts, and a re-run through a formatter is not one."""
+    return "".join(text.split())
+
+
+def archived_twin(c, text):
+    """The first archived file whose code matches `text`, or None."""
+    want = squashed(text)
+    for p in sorted(SOLUTIONS.glob(f"*{entry_ext(c)}")) if SOLUTIONS.exists() else []:
+        try:
+            if squashed(read(p)) == want:
+                return p
+        except OSError:
+            continue
+    return None
+
+
+def archive_solution(c):
+    """File the entry file under solutions/. Returns (path, is_new).
+
+    Called on a 100% judge and nowhere else, so the archive means exactly one thing:
+    every file in it passed the whole suite at the moment it was written."""
+    entry = ROOT / c["entry"]
+    text = read(entry)
+    twin = archived_twin(c, text)
+    if twin:
+        return twin, False
+    SOLUTIONS.mkdir(exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    dest = SOLUTIONS / f"solution-{stamp}{entry_ext(c)}"
+    # Two different solutions inside the same second would otherwise overwrite each
+    # other — rare, but the archive is the thing `wipe` trusts before deleting.
+    n = 2
+    while dest.exists():
+        dest = SOLUTIONS / f"solution-{stamp}-{n}{entry_ext(c)}"
+        n += 1
+    shutil.copyfile(entry, dest)
+    return dest, True
+
+
+def latest_solution(c):
+    if not SOLUTIONS.exists():
+        return None
+    return max(SOLUTIONS.glob(f"solution-*{entry_ext(c)}"), key=lambda p: p.name,
+               default=None)
+
+
+def wipe(c, force=False):
+    """Restore the entry file from the stub scaffold saved it from.
+
+    Refuses while the current attempt exists only here: an unarchived solve is the one
+    thing in the workspace that cannot be regenerated."""
+    entry = ROOT / c["entry"]
+    stub = stub_file(c)
+    if not stub.exists():
+        die(f"no .oa/stub{entry_ext(c)} to restore from — it is written by scaffold.py, "
+            f"so this workspace predates `wipe` or the file was deleted")
+
+    note = "there was no entry file"
+    if entry.exists():
+        text = read(entry)
+        if squashed(text) == squashed(read(stub)):
+            note = "it was already the stub"
+        else:
+            twin = archived_twin(c, text)
+            if twin:
+                note = f"your attempt is archived as {twin.relative_to(ROOT)}"
+            elif force:
+                note = "the previous attempt was discarded"
+            else:
+                die(f"{c['entry']} is not in solutions/ — a 100% `judge` archives it "
+                    f"for you, or `wipe --force` throws it away")
+    shutil.copyfile(stub, entry)
+    print(f"restored {c['entry']} from .oa/stub{entry_ext(c)} {DIM}({note}){X}")
+
+
 # ---------------------------------------------------------------- reporting
 
 def clip(s, lines=15, width=120):
@@ -1327,12 +1423,14 @@ def selfcheck(c, entry=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["run", "judge", "gen", "answers", "case", "selfcheck"])
+    ap.add_argument("cmd", choices=["run", "judge", "gen", "answers", "case",
+                                    "selfcheck", "wipe"])
     ap.add_argument("name", nargs="?")
     ap.add_argument("--reveal", type=int, default=None,
                     help="how many failing tests to explain in full "
                          "(default: every sample for run, none for judge)")
-    ap.add_argument("--force", action="store_true", help="discard cached tests / answers")
+    ap.add_argument("--force", action="store_true", help="discard cached tests / answers; "
+                                                        "wipe: discard an unarchived attempt")
     ap.add_argument("--entry", help="selfcheck: score this known-correct solution instead "
                                     "of the stub, to prove the entry file's I/O matches "
                                     "the generator and the reference")
@@ -1356,6 +1454,12 @@ def main():
 
     if a.cmd == "selfcheck":
         sys.exit(selfcheck(c, a.entry))
+
+    # Before build(): the whole point of `wipe` is to reach for it when what is in the
+    # entry file does not work, and a stub that fails to compile is a normal state.
+    if a.cmd == "wipe":
+        wipe(c, force=a.force)
+        return
 
     argv = build(c)
 
@@ -1396,6 +1500,10 @@ def main():
     p, t, stats, _ = execute(c, argv, ts, 0 if a.reveal is None else a.reveal, "Score")
     if p == t and t:
         complexity_report(c, stats)
+        kept, fresh = archive_solution(c)
+        rel = kept.relative_to(ROOT)
+        print(f"\n{G}archived {rel}{X}" if fresh else
+              f"\n{DIM}already archived as {rel} — not filing a second copy{X}")
     elif a.reveal is None:
         # But this is still a practice tool, and a score with no route to a diff is a
         # dead end. Name the two ways through, once, without printing any of it.

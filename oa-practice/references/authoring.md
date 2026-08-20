@@ -319,10 +319,21 @@ there is nothing to cross.
 ./oa.sh answers           # compute the expected outputs (slow, resumable)
 ./oa.sh selfcheck         # references vs samples + coverage + staleness + checker
 ./oa.sh selfcheck --entry _check.cpp  # ...and the plumbing — the last gate before hand-over
+./oa.sh wipe              # entry file back to the stub, to solve the problem cold again
+./oa.sh wipe --force      # ...discarding an attempt that never reached solutions/
 ```
 
 Windows: `.\run.cmd`, `.\judge.cmd`, `.\oa.cmd <cmd>`. All three wrappers forward to
 `oa.py`, which you can also call directly if you already know your interpreter's name.
+
+A `judge` run that scores 100% copies the entry file to
+`solutions/solution-<YYYYMMDD-HHMMSS>.<ext>`, unless an equivalent file is already
+there — the comparison strips every whitespace character first, so a reformat of a
+solution already on file is recognised as the same one. `wipe` restores the entry file
+from `.oa/stub.<ext>`, the untouched copy scaffold left behind, and refuses while the
+current file is neither that stub nor something `solutions/` already holds. That is the
+whole safety rule: nothing deletes an attempt the archive has not seen, and `--force`
+is the only way past it.
 
 `tests/hidden/` records what built it in `_stamp.json` — a hash of `.oa/gen.py`, the
 seed, and a hash of each reference — and every command checks it, so an edit takes

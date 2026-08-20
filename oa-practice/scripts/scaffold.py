@@ -5,7 +5,8 @@
 
 Creates DEST/<slug>/ with oa.py, the run/judge/oa wrappers for both platforms,
 problem.json, README.md, a solution stub, tests/samples/, and .oa/gen.py plus
-.oa/ref/reference.py.
+.oa/ref/reference.py. The stub is saved twice — once as the entry file the user
+edits, once as .oa/stub.<ext>, which is what `oa.py wipe` restores from.
 
 Those last two arrive as a worked example for a different problem, each carrying a
 `TEMPLATE = True` line. The harness refuses to run until you have rewritten them and
@@ -62,6 +63,10 @@ def main():
     if not stub.exists():
         raise SystemExit(f"missing stub {stub} — the skill's assets are incomplete")
     shutil.copy(stub, dest / entry)
+    # A pristine copy, for `oa.py wipe`. The entry file stops being a stub the moment
+    # the user types into it, so the only way back to a cold start is a copy kept out
+    # of the way — .oa/ is already the folder the user is told not to read.
+    shutil.copy(stub, dest / ".oa" / f"stub{Path(entry).suffix}")
 
     cfg = json.loads((dest / "problem.json").read_text(encoding="utf-8-sig"))
     cfg.update(name=a.slug, language=a.lang, entry=entry, time_limit_ms=a.tl)
