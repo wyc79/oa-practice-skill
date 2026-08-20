@@ -21,7 +21,7 @@ separate request and fine to fulfill.
 <slug>/
 ├── main.cpp / main.py  # I/O parsed and printed; solve() is a stub for the user
 ├── problem.json        # language, time limit, checker mode
-├── README.md           # restated statement, constraints, how tight the limit is
+├── README.md           # the statement restated, with samples and constraints
 ├── HINTS.md            # SPOILERS — knowledge point, why the constraints force it,
 │                       #   related LeetCode problems. Written now, read later.
 ├── run.sh, run.cmd     # samples only, with diffs                    ("Run Code")
@@ -144,6 +144,14 @@ reference meets ground truth the harness did not generate itself, so a sample fi
 by running the reference collapses that into the reference agreeing with itself: it
 passes every time, prints `consistent`, and proves nothing — while the workspace may be
 solving a subtly different problem than the one on the page.
+
+**The README carries them too.** `tests/samples/` is what the runner reads; the README
+is what a person reads, and step 2's promise is that it restates the problem completely
+enough to solve from without the original tab open. A sample referred to by filename
+does not do that. So every one of them goes into the README's Samples table as well —
+input, expected output, and a note saying whether it came from the statement or from
+you — byte-faithful to the files. A sample that differs between the two is a bug the
+user will spend an afternoon on before it occurs to them to distrust the README.
 
 **Then go looking for what they don't cover.** These two or three files are the only
 external truth the workspace will ever have; every hidden answer past their reach is

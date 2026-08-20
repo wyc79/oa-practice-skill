@@ -10,9 +10,30 @@
 
 ## Output
 
-<!-- Format, and any tie-breaking or precision rule. Note here if any sample in
-     tests/samples/ was worked out by hand rather than taken from the statement —
-     those are the ones to distrust first if the judge and you disagree. -->
+<!-- Format, and any tie-breaking or precision rule. If more than one output is
+     accepted, say so here as well as in the Samples table. -->
+
+## Samples
+
+<!-- Every file in tests/samples/ appears here, verbatim — the statement's own examples
+     first, then any you worked out by hand. Byte-faithful to the files: a tidied copy
+     here and a different one on disk is an afternoon of confusion.
+
+     Note records where each came from ("from the statement" / "hand-made: makes n a
+     multiple of k") and any caveat, such as several outputs being accepted.
+
+     Single-line I/O goes in the cell, in backticks. Anything longer gets a "see below"
+     cell and a fenced block after the table — pipes and <br> inside a cell are
+     unreadable in a terminal and unreliable in a diff. So:
+
+     | 1 | `3 1 2` | `6` | from the statement |
+     | 2 | see below | see below | hand-made: the empty case |
+
+     ### Sample 2
+     ...then an Input fenced block and an Output one, byte for byte from the files. -->
+
+| # | Input | Output | Note |
+|---|-------|--------|------|
 
 ## Constraints
 

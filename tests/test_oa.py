@@ -200,9 +200,18 @@ def test_the_hints_skeleton_asks_for_its_three_sections(raw):
 
 def test_the_readme_skeleton_keeps_its_sections(raw):
     readme = (raw / "README.md").read_text()
-    for section in ("## Input", "## Output", "## Constraints", "## Target",
-                    "## Running it"):
+    for section in ("## Input", "## Output", "## Samples", "## Constraints",
+                    "## Target", "## Running it"):
         assert section in readme, section
+
+
+def test_the_readme_skeleton_wants_the_samples_inline(raw):
+    # tests/samples/ is what the runner reads; the README is what a person reads, and
+    # it has to be solvable from without opening the folder.
+    samples = (raw / "README.md").read_text().split("## Samples", 1)[1]
+    samples = samples.split("\n## ", 1)[0]
+    assert "| # | Input | Output | Note |" in samples
+    assert "verbatim" in samples
 
 
 def test_the_readme_target_section_gives_nothing_away(raw):
