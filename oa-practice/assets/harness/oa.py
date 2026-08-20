@@ -21,7 +21,9 @@ same build() and so to the same toolchain: `_check.cpp` for the default C++ work
 `_check.py` for a Python one.
 
 A 100% `judge` files the entry file away under solutions/, which is what makes `wipe`
-safe to run: it refuses to overwrite an attempt the archive has not already seen.
+safe to run: it refuses to overwrite an attempt the archive has not already seen. It
+also flips this folder's row from `unsolved` to `solved <date>` in the bank's
+CATALOGUE.md, if there is one, once — later passes leave the first date standing.
 
 `--llm` and `review` are the only network in here, they are opt-in, and they are
 best-effort by construction: no key, no .env, no network, or a bad endpoint each cost
@@ -849,6 +851,120 @@ def wipe(c, force=False):
                     f"for you, or `wipe --force` throws it away")
     shutil.copyfile(stub, entry)
     print(f"restored {c['entry']} from .oa/stub{entry_ext(c)} {DIM}({note}){X}")
+
+
+# --------------------------------------------------------- the bank catalogue
+# A problem folder usually sits in a bank repo whose root carries an index, and that
+# index has a Status column that starts at `unsolved`. The first 100% judge is the one
+# event allowed to change it, because the column is a record of what the *user* did —
+# not of what the workspace can do, which `selfcheck` already established before they
+# ever saw it.
+#
+# Everything here is best-effort and mostly silent: a folder with no bank around it is
+# the common case, and the parent's README is usually just a README.
+
+def is_separator(line):
+    return bool(re.match(r"^\s*\|[\s:|-]+\|\s*$", line))
+
+
+def cell_names_folder(cell, slug):
+    """Does this cell point at our folder?
+
+    `slug`, `[slug](slug/)`, `[title](./slug/)` and `[title](slug/README.md)` all
+    count. `slug-ii` does not — a prefix match would mark the wrong problem solved,
+    and there is no undo for that beyond the user noticing."""
+    text = cell.strip()
+    if text == slug:
+        return True
+    for label, target in re.findall(r"\[([^\]]*)\]\(([^)]*)\)", text):
+        if label.strip() == slug:
+            return True
+        t = target.strip().strip("<>").split("#")[0].split("?")[0]
+        if t.startswith("./"):
+            t = t[2:]
+        if t.rstrip("/").split("/")[0] == slug:
+            return True
+    return False
+
+
+def find_catalogue_row(text, slug):
+    """(row index, Status column index, whether any catalogue table was seen).
+
+    The third value separates "this file is not an index" — the parent README of an
+    ordinary directory — from "it is an index and our row is missing", which is worth
+    saying out loud because it means the row never got appended."""
+    lines = text.split("\n")
+    status_i = None
+    saw_table = False
+    fenced = False
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            status_i = None
+            continue
+        if fenced or not line.lstrip().startswith("|"):
+            status_i = None
+            continue
+        cells = line.split("|")
+        if status_i is None:
+            # A header only counts as one if the next line is the |---|---| rule.
+            if i + 1 < len(lines) and is_separator(lines[i + 1]):
+                for j, cell in enumerate(cells):
+                    if cell.strip().lower() == "status":
+                        status_i, saw_table = j, True
+                        break
+            continue
+        if is_separator(line):
+            continue
+        if any(cell_names_folder(cell, slug) for cell in cells):
+            return i, status_i, saw_table
+    return None, None, saw_table
+
+
+def mark_catalogue_solved():
+    try:
+        _mark_catalogue_solved()
+    except Exception as e:
+        # The catalogue is someone's notes about their own practice. Nothing about it
+        # is worth failing a submit over.
+        print(f"{DIM}catalogue: left alone — {type(e).__name__}: {e}{X}")
+
+
+def _mark_catalogue_solved():
+    path = next((p for p in (ROOT.parent / "CATALOGUE.md", ROOT.parent / "README.md")
+                 if p.is_file()), None)
+    if path is None:
+        return
+    # utf-8 rather than utf-8-sig: a BOM is part of the bytes this promised not to
+    # disturb. Titles in these tables are routinely Chinese, so the decode matters.
+    text = path.read_text(encoding="utf-8")
+    row_i, status_i, saw_table = find_catalogue_row(text, ROOT.name)
+    if row_i is None:
+        if saw_table:
+            print(f"{DIM}catalogue: no row for {ROOT.name} in {path.name} — add one, "
+                  f"or the index will not know this is done{X}")
+        return
+
+    lines = text.split("\n")
+    cells = lines[row_i].split("|")
+    if status_i >= len(cells):
+        print(f"{DIM}catalogue: the {ROOT.name} row in {path.name} has no Status "
+              f"cell{X}")
+        return
+    current = cells[status_i].strip()
+    if current.lower() != "unsolved":
+        # Already solved, or a word the user keeps there themselves. The date records
+        # the *first* solve, so re-passing after a `wipe` must leave it exactly alone.
+        return
+
+    stamp = time.strftime("%Y-%m-%d")
+    # One cell of one line. Splitting on "|" and rejoining reproduces the row byte for
+    # byte, and replacing inside the cell keeps its padding — so a Category or Notes
+    # column the user maintains comes back untouched, which is the whole contract.
+    cells[status_i] = cells[status_i].replace(current, f"solved {stamp}", 1)
+    lines[row_i] = "|".join(cells)
+    write(path, "\n".join(lines))
+    print(f"{G}catalogue: marked solved {stamp}{X}")
 
 
 # ------------------------------------------------------------- LLM review
@@ -1735,6 +1851,7 @@ def main():
         rel = kept.relative_to(ROOT)
         print(f"\n{G}archived {rel}{X}" if fresh else
               f"\n{DIM}already archived as {rel} — not filing a second copy{X}")
+        mark_catalogue_solved()
         if a.llm:
             review(c, kept, uncoloured(summary), tag="--llm: ")
     elif a.llm:
