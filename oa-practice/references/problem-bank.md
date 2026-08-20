@@ -1,0 +1,169 @@
+# Bootstrapping a problem-bank repo
+
+Read this when the user asks for a problem bank ("mother repo", "my OA repo"), or when
+the first scaffold is about to land in a directory that is empty or a bare `git init`.
+It is one-time setup. Afterwards, adding a problem is `scaffold.py` plus one row in
+`CATALOGUE.md`, and none of these files is touched again.
+
+Four files at the repo root, and a fifth worth offering. The harness reads none of
+them — they are for the human and for git. **Create what is missing and append to what
+exists; replace nothing.** A repo that already has a `.gitignore` or a README has them
+for a reason.
+
+```
+<bank>/
+├── README.md         # what the repo is and how to work a problem — static
+├── CATALOGUE.md      # one row per problem — the only file that grows
+├── .gitattributes    # CRLF for .cmd, LF for everything the harness reads
+├── .gitignore        # entry files and .env
+├── .env.example      # optional: the review keys, names only
+└── <slug>/           # one scaffolded workspace per problem
+```
+
+## README.md
+
+Written once. It describes the repo, not any problem in it — if you find yourself
+editing it because a problem was added, the row belonged in `CATALOGUE.md`.
+
+```markdown
+# <name>
+
+<One line: whose bank this is, and what kind of problems land here.>
+
+Every folder is one problem with its own harness — statement, samples, hidden tests,
+and a scorer. [CATALOGUE.md](CATALOGUE.md) is the index.
+
+## Working a problem
+
+    cd <slug>
+
+| | macOS / Linux | Windows |
+|---|---|---|
+| Run Code — samples only | `./run.sh` | `.\run.cmd` |
+| Submit — score on every test | `./judge.sh` | `.\judge.cmd` |
+| Submit, and explain the first failure | `./judge.sh --reveal 1` | `.\judge.cmd --reveal 1` |
+| Submit, then have an LLM review it | `./judge.sh --llm` | `.\judge.cmd --llm` |
+| Replay one test in full | `./oa.sh case t07-max` | `.\oa.cmd case t07-max` |
+| Start over from the stub | `./oa.sh wipe` | `.\oa.cmd wipe` |
+
+`run` explains every failing sample, because the statement prints those anyway.
+`judge` gives you a percentage and which tests were red and nothing else, because the
+expected output of a hidden test is the answer. `--reveal` and `case` are the ways
+through that when you would rather learn than be scored.
+
+`--llm` is opt-in and runs only after a 100% score: it sends the problem's README,
+your solution and the timing summary to an LLM and prints what it says about
+complexity, idiom, edge cases and likely follow-ups. It needs `OA_REVIEW_API_KEY` in a
+`.env` at this root — which is gitignored and must stay that way.
+
+## Solve it, then solve it again
+
+A `judge` that scores 100% files your solution under `<slug>/solutions/` as
+`solution-<date>-<time>.<ext>`, skipping it if an equivalent one is already there.
+`./oa.sh wipe` then restores the stub and hands the problem back cold. It refuses
+while what you have is neither the stub nor something already archived, so nothing you
+have not saved can be lost; `wipe --force` overrides that.
+
+The entry files — `main.cpp`, `main.py` — are gitignored, so what this repo holds is
+clean workspaces plus everyone's `solutions/`. **A fresh clone has no entry file**:
+run `./oa.sh wipe` in a problem folder to materialize one from the committed
+`.oa/stub.<ext>`.
+
+## Spoilers, and where they live
+
+- `<slug>/HINTS.md` — the knowledge point, why the constraints force it, and related
+  problems. A deliberate door: open it after your first real attempt.
+- `<slug>/.oa/` — the generator and the reference solutions.
+- `<slug>/tests/hidden/*.out` — the expected answers.
+
+## Adding a problem
+
+Ask Claude with the oa-practice skill; it scaffolds the folder and appends the
+CATALOGUE row. By hand:
+
+    python3 <skill>/scripts/scaffold.py <slug> --dir . --lang cpp --tl 3000
+```
+
+Fill the placeholders in rather than shipping them. Trim rows the bank will not use.
+
+## CATALOGUE.md
+
+Header plus an empty table. Nothing else — it exists to grow.
+
+```markdown
+# Catalogue
+
+Status is yours to flip: a problem is `solved` once *you* have scored 100% on it.
+Nothing here names the topic — that is in each folder's `HINTS.md`, on purpose.
+
+| # | Problem | Folder | Lang | Source | Added | Status |
+|---|---------|--------|------|--------|-------|--------|
+```
+
+Columns are fixed by the guidance in SKILL.md — in particular there is **no topic
+column**, and adding one later would spoil every row at once. Titles carry both
+languages when the statements are bilingual (`210. Course Schedule II / 课程表 II`).
+
+## .gitattributes
+
+Copy verbatim. Both halves are load-bearing: a batch file normalized to LF executes
+fragments of its own source, and a test file normalized to CRLF makes the same seed
+produce different bytes on Windows than on macOS.
+
+```
+# cmd.exe seeks through a batch file as it runs; an LF-only file with a `for` block
+# and a `goto` inside it can jump to the wrong offset. Keep the wrappers CRLF.
+*.cmd text eol=crlf
+
+# Everything the harness reads or writes is LF, on every platform, so the same seed
+# produces byte-identical tests on Windows and macOS.
+*.sh   text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.in   text eol=lf
+*.out  text eol=lf
+```
+
+## .gitignore
+
+Append these to whatever is already there.
+
+```
+# The entry files are the user's own attempt. Keeping them out means the repo holds
+# problems rather than answers, and a clone hands you the work instead of the result.
+# `oa.py wipe` materializes one from the committed .oa/stub.<ext>.
+main.cpp
+main.py
+
+# The LLM review key. Never committed.
+.env
+
+__pycache__/
+*.pyc
+```
+
+`solutions/` is **not** ignored — the archive is the point of the repo. Neither is
+`.oa/`, which has to travel: it carries the generator, the references, and the stub
+that `wipe` restores from.
+
+## .env.example — optional, and worth offering
+
+Names, no values, so nobody has to guess the spelling. Committing it is safe; it is
+also the reminder that its unsuffixed sibling is not.
+
+```
+OA_REVIEW_API_KEY=
+OA_REVIEW_MODEL=
+OA_REVIEW_BASE_URL=
+```
+
+## Before handing it over
+
+- `git check-ignore -v <slug>/main.py` names the `.gitignore` line — the entry file is
+  really ignored, not merely absent from `git status` because it is already tracked.
+  If it *is* already tracked, `git rm --cached` it, or the ignore rule does nothing.
+- `git status` in a solved folder shows `solutions/` as untracked-and-addable, not
+  ignored.
+- The CATALOGUE table has no topic column.
+- The README's placeholders are filled in.

@@ -393,13 +393,14 @@ Never flip the status yourself either: it tracks the user, not the workspace, an
 only thing that moves it off `unsolved` is their own first `judge` at 100%. Everything
 you verified in step 7 was the harness agreeing with itself.
 
-Setting one of these up from scratch, the root `.gitignore` wants two more lines
-beyond the usual: `main.cpp` / `main.py`, so the repo holds problems rather than
-answers (see the redo loop above), and `.env`, so nobody's review key is ever pushed
-with them.
+Creating the bank itself is different work — the user asks for one, or the parent is
+empty or a bare `git init`. It is one-time setup with a checklist of its own: read
+`references/problem-bank.md` before writing any root file, the same way step 3 reaches
+for `references/authoring.md`.
 
 ## Reference
 
-- `references/authoring.md` — parsing patterns, generator recipes per problem family, checker examples, `problem.json` fields.
+- `references/authoring.md` — parsing patterns, generator recipes per problem family, checker examples, `problem.json` fields, writing `HINTS.md`.
+- `references/problem-bank.md` — one-time setup for a problem-bank repo: the root README, `CATALOGUE.md`, `.gitattributes`, `.gitignore`. Read it before creating any of them.
 - `assets/harness/` — the template files scaffold copies. `oa-internal/` there is what lands as `.oa/` in the workspace: dot-entries do not survive skill packaging, so scaffold renames it on the way out.
 - `assets/stubs/` — solution stubs per language.
