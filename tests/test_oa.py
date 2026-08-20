@@ -910,6 +910,7 @@ def test_wipe_restores_the_stub_once_the_attempt_is_archived(ws):
     oa(ws, "judge", expect=0)
     p = oa(ws, "wipe", expect=0)
     assert (ws / "main.py").read_text() == (ws / ".oa" / "stub.py").read_text()
+    # It names the folder the attempt went to, not just that one exists.
     assert f"solutions/{solutions(ws)[0]}" in out(p).replace("\\", "/")
 
 
@@ -918,7 +919,8 @@ def test_wipe_recognises_a_legacy_flat_archive(ws):
     # solutions/. A solve is a solve: wipe must not offer to throw one of those away.
     write(ws / "solutions" / "solution-20240101-101010.py", MAIN)
     p = oa(ws, "wipe", expect=0)
-    assert "archived" in out(p)
+    # A flat file has no folder to name, so it names the file.
+    assert "solution-20240101-101010.py" in out(p).replace("\\", "/")
     assert (ws / "main.py").read_text() == (ws / ".oa" / "stub.py").read_text()
 
 

@@ -874,7 +874,10 @@ def wipe(c, force=False):
         else:
             twin = archived_twin(c, text)
             if twin:
-                note = f"your attempt is archived in {twin.parent.relative_to(ROOT)}"
+                # Name the folder in the current layout and the file in the legacy one;
+                # "archived in solutions" is true of everything and tells nobody which.
+                where = twin if twin.parent == SOLUTIONS else twin.parent
+                note = f"your attempt is archived as {where.relative_to(ROOT)}"
             elif force:
                 note = "the previous attempt was discarded"
             else:
