@@ -373,13 +373,25 @@ fresh clone materializes its entry file with `./oa.sh wipe` (or by scaffolding a
 **Follow-up problems**: scaffold each into its own folder under the same parent. Reuse
 the harness — only `main`, samples, `ref/`, and `gen.py` change.
 
-**Catalogue repos**: when the parent is a problem bank with a root README or index —
-a table of problems — finish by appending a row for the new folder: title, link to
-the folder, topic, language, source, date added, and a status column left
-`unsolved`. Match the columns the table already has rather than the list here. Never
-flip that status yourself: it tracks the user, not the workspace, and the only thing
-that moves it off `unsolved` is their own first `judge` at 100%. Everything you
-verified in step 7 was the harness agreeing with itself.
+**Catalogue repos**: when the parent is a problem bank, finish by appending a row for
+the new folder to `CATALOGUE.md` at the repo root. Keeping the index out of the README
+is the point of the split — the README describes the repo once and stops changing,
+while the table grows a line per problem forever. If a repo already keeps its table in
+`README.md`, append there instead and say the split is available: someone else's layout
+is not yours to restructure on the way past.
+
+Columns: `#`, the problem's title (both languages when the statement is bilingual), a
+link to the folder, language, source, date added, and status, left `unsolved`. Match
+the columns the table already has rather than this list, with one exception —
+**never add a topic or knowledge-point column, and leave one empty if the table
+already has it.** A catalogue that names the topic tells the user what the problem is
+about before they have tried it, which is exactly what `HINTS.md` exists to keep behind
+a door; a column that spoils every row at once is worse than the README line the door
+was built for.
+
+Never flip the status yourself either: it tracks the user, not the workspace, and the
+only thing that moves it off `unsolved` is their own first `judge` at 100%. Everything
+you verified in step 7 was the harness agreeing with itself.
 
 Setting one of these up from scratch, the root `.gitignore` wants two more lines
 beyond the usual: `main.cpp` / `main.py`, so the repo holds problems rather than
