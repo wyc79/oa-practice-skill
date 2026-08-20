@@ -860,7 +860,8 @@ def test_plumbing_refuses_to_redirect_a_custom_run_cmd(ws):
 # already seen — every test below is about that rule holding.
 
 def solutions(ws):
-    return sorted(p.name for p in (ws / "solutions").glob("*.py"))
+    """The stamp folder of every archived solution, oldest first."""
+    return sorted(p.parent.name for p in (ws / "solutions").glob("*/solution.py"))
 
 
 def test_scaffold_saves_a_pristine_stub(raw):
@@ -872,7 +873,11 @@ def test_scaffold_saves_a_pristine_stub(raw):
 def test_a_hundred_percent_judge_archives_the_entry_file(ws):
     oa(ws, "judge", expect=0)
     assert len(solutions(ws)) == 1
-    assert (ws / "solutions" / solutions(ws)[0]).read_text() == MAIN
+    stamp = solutions(ws)[0]
+    assert re.fullmatch(r"\d{8}-\d{6}", stamp), stamp
+    assert (ws / "solutions" / stamp / "solution.py").read_text() == MAIN
+    # One attempt per folder, and nothing else in it until something is said about it.
+    assert [p.name for p in (ws / "solutions" / stamp).iterdir()] == ["solution.py"]
 
 
 def test_a_failing_judge_archives_nothing(ws):
@@ -905,7 +910,24 @@ def test_wipe_restores_the_stub_once_the_attempt_is_archived(ws):
     oa(ws, "judge", expect=0)
     p = oa(ws, "wipe", expect=0)
     assert (ws / "main.py").read_text() == (ws / ".oa" / "stub.py").read_text()
-    assert "solutions/solution-" in out(p).replace("\\", "/")
+    assert f"solutions/{solutions(ws)[0]}" in out(p).replace("\\", "/")
+
+
+def test_wipe_recognises_a_legacy_flat_archive(ws):
+    # Workspaces built before the archive grew folders wrote the file straight into
+    # solutions/. A solve is a solve: wipe must not offer to throw one of those away.
+    write(ws / "solutions" / "solution-20240101-101010.py", MAIN)
+    p = oa(ws, "wipe", expect=0)
+    assert "archived" in out(p)
+    assert (ws / "main.py").read_text() == (ws / ".oa" / "stub.py").read_text()
+
+
+def test_a_legacy_flat_archive_still_dedupes(ws):
+    write(ws / "solutions" / "solution-20240101-101010.py", MAIN)
+    p = oa(ws, "judge", expect=0)
+    assert "already archived" in out(p)
+    assert solutions(ws) == []          # nothing new filed, nothing migrated
+    assert (ws / "solutions" / "solution-20240101-101010.py").exists()
 
 
 def test_wipe_refuses_an_unarchived_attempt(ws):
@@ -989,7 +1011,9 @@ def dotenv(path, url, key="test-key", model="test-model"):
 
 
 def reviews(ws):
-    return sorted(p.name for p in (ws / "solutions").glob("*.review.md"))
+    """The stamp folder of every review written, so a review can be matched to the
+    solution it is about by folder rather than by filename."""
+    return sorted(p.parent.name for p in (ws / "solutions").glob("*/review.md"))
 
 
 def test_llm_review_prints_the_reply_and_saves_it(ws, fake_llm):
@@ -998,10 +1022,11 @@ def test_llm_review_prints_the_reply_and_saves_it(ws, fake_llm):
     p = oa(ws, "judge", "--llm", expect=0)
     assert REPLY.strip() in out(p)
     assert "leaves this machine" in out(p)
-    assert len(reviews(ws)) == 1
-    assert REPLY.strip() in (ws / "solutions" / reviews(ws)[0]).read_text()
-    # The review sits beside the solution it is about, sharing its stamp.
-    assert reviews(ws)[0] == solutions(ws)[0].replace(".py", ".review.md")
+    assert reviews(ws) == solutions(ws)     # beside the solution it is about
+    stamp = solutions(ws)[0]
+    assert REPLY.strip() in (ws / "solutions" / stamp / "review.md").read_text()
+    assert sorted(p.name for p in (ws / "solutions" / stamp).iterdir()) == [
+        "review.md", "solution.py"]
     assert len(seen) == 1
 
 
@@ -1045,7 +1070,7 @@ def test_review_reads_the_latest_archived_solution(ws, fake_llm):
     p = oa(ws, "review", expect=0)     # ...and review still has something to talk about
     assert REPLY.strip() in out(p)
     assert "def solve(a)" in seen[0]["body"]["messages"][0]["content"]
-    assert len(reviews(ws)) == 1
+    assert reviews(ws) == solutions(ws)
 
 
 def test_review_without_an_archived_solution_exits_zero(ws, fake_llm):
@@ -1297,3 +1322,30 @@ def test_the_env_template_names_exactly_what_the_harness_reads():
     for name in ("OA_REVIEW_MODEL", "OA_REVIEW_BASE_URL"):
         assert f"# {name}=" in template
 
+
+
+
+def test_review_targets_the_newest_solution_folder(ws, fake_llm):
+    url, seen, _ = fake_llm
+    dotenv(ws, url)
+    oa(ws, "judge", expect=0)
+    oa(ws, "wipe", expect=0)
+    later = MAIN.replace("return sum(a)", "return sum(x for x in a)")
+    write(ws / "main.py", later)
+    oa(ws, "judge", expect=0)
+    assert len(solutions(ws)) == 2
+    oa(ws, "review", expect=0)
+    # The review goes to the newest folder, and names the code that folder holds.
+    assert reviews(ws) == [solutions(ws)[-1]]
+    assert "sum(x for x in a)" in seen[0]["body"]["messages"][0]["content"]
+
+
+def test_a_legacy_flat_solution_keeps_the_old_review_name(ws, fake_llm):
+    # No folder of its own to put a review.md in, and a bare one in solutions/ would
+    # collide with every other. Migrating someone's archive is not the fix.
+    url, _, _ = fake_llm
+    dotenv(ws, url)
+    write(ws / "solutions" / "solution-20240101-101010.py", MAIN)
+    oa(ws, "review", expect=0)
+    assert (ws / "solutions" / "solution-20240101-101010.review.md").exists()
+    assert not (ws / "solutions" / "review.md").exists()

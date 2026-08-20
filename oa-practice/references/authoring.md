@@ -362,8 +362,8 @@ Windows: `.\run.cmd`, `.\judge.cmd`, `.\oa.cmd <cmd>`. All three wrappers forwar
 `oa.py`, which you can also call directly if you already know your interpreter's name.
 
 A `judge` run that scores 100% copies the entry file to
-`solutions/solution-<YYYYMMDD-HHMMSS>.<ext>`, unless an equivalent file is already
-there — the comparison strips every whitespace character first, so a reformat of a
+`solutions/<YYYYMMDD-HHMMSS>/solution.<ext>` — a folder per attempt, so anything else
+about it has somewhere to sit — unless an equivalent solution is already archived — the comparison strips every whitespace character first, so a reformat of a
 solution already on file is recognised as the same one. `wipe` restores the entry file
 from `.oa/stub.<ext>`, the untouched copy scaffold left behind, and refuses while the
 current file is neither that stub nor something `solutions/` already holds. That is the
@@ -457,7 +457,7 @@ are opt-in. `--llm` runs the post-mortem after a 100% score and prints one line 
 on any lower one; `review` does the same for the newest file in `solutions/` without
 re-running anything. What goes out is the folder's `README.md`, the solution itself, and
 judge's timing and scaling summary; what comes back is printed and written to
-`solutions/solution-<stamp>.review.md`. A line naming the host is printed before the
+`review.md` inside that solution's folder. A line naming the host is printed before the
 request, because sending someone's code somewhere should never be silent.
 
 | Variable | |

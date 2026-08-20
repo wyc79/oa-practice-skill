@@ -29,8 +29,8 @@ separate request and fine to fulfill.
 ├── oa.sh, oa.cmd       # any other harness command, same interpreter probe
 ├── oa.py               # harness engine (run / judge / gen / answers / case / selfcheck)
 ├── tests/samples/      # sample1.in, sample1.out, sample2.in, ...
-├── solutions/          # every attempt that scored 100%, filed by judge, and any
-│                       #   solution-<stamp>.review.md the LLM post-mortem wrote
+├── solutions/          # one folder per attempt that scored 100%, filed by judge
+│   └── <stamp>/        #   solution.<ext>, plus review.md when --llm ran
 └── .oa/
     ├── gen.py          # declared constraint bounds + edge cases + randoms + stress
     ├── checker.py      # only when multiple outputs are valid
@@ -353,7 +353,7 @@ that just passed and judge's own timing and scaling numbers to an LLM, and print
 comes back — complexity against the stated target, idiom and simplification, edge
 cases inside the constraints that the generator never tried, and the follow-ups an
 interviewer would reach for. The reply is saved beside the solution as
-`solution-<stamp>.review.md`. One line says so before any code leaves the machine, and
+`review.md` in its folder. One line says so before any code leaves the machine, and
 nothing is sent without the flag.
 
 Configure with `OA_REVIEW_API_KEY`, plus optional `OA_REVIEW_MODEL` and
@@ -366,9 +366,11 @@ wrong endpoint or a dead network each cost one line and leave the score and the 
 code exactly as the judge computed them. A harness that fails a submit over someone
 else's outage would be worse than one that never had opinions.
 
-**The redo loop**: a 100% `judge` copies the entry file into `solutions/` as
-`solution-<date>-<time>.<ext>`, and skips it when an equivalent one is already there —
-whitespace is ignored, so re-running a formatter does not file a second copy.
+**The redo loop**: a 100% `judge` copies the entry file into its own folder,
+`solutions/<date>-<time>/solution.<ext>`, and skips it when an equivalent one is
+already archived — whitespace is ignored, so re-running a formatter does not file a
+second copy. Each folder holds one attempt and, once `--llm` has run on it, the
+`review.md` written about that attempt.
 `./oa.sh wipe` then restores the stub from `.oa/stub.<ext>` and the problem is cold
 again. It refuses while the current file is neither the stub nor already in
 `solutions/`, because an unarchived solve is the one thing in the folder that cannot

@@ -68,13 +68,15 @@ be scored.
 
 On a clean pass `judge` also prints how your solution scales with input size.
 
-A run that scores 100% files your solution under `solutions/`. `wipe` then hands the
-problem back cold — it restores the stub, and refuses if what you have now is not
-already archived there.
+A run that scores 100% files your solution in a folder of its own,
+`solutions/<date>-<time>/solution.<ext>` — one attempt per folder, with anything else
+about it beside it. `wipe` then hands the problem back cold: it restores the stub, and
+refuses if what you have now is not already archived.
 
 `--llm` is opt-in and only runs once you have scored 100%: it sends this README, your
 solution and the timing summary to an LLM and prints what it says about complexity,
-idiom, edge cases and likely follow-up questions, saving it next to the solution. It
+idiom, edge cases and likely follow-up questions, saving it as `review.md` in that
+solution's folder. It
 needs `OA_REVIEW_API_KEY` in a `.env` here or in the folder above — never commit that
 file. Without a key you get one line and your score, unchanged.
 

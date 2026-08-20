@@ -20,8 +20,8 @@ The `--entry` stand-in carries the entry file's extension, because it goes throu
 same build() and so to the same toolchain: `_check.cpp` for the default C++ workspace,
 `_check.py` for a Python one.
 
-A 100% `judge` files the entry file away under solutions/, which is what makes `wipe`
-safe to run: it refuses to overwrite an attempt the archive has not already seen. It
+A 100% `judge` files the entry file away as solutions/<stamp>/solution.<ext>, which is
+what makes `wipe` safe to run: it refuses to overwrite an attempt the archive has not already seen. It
 also flips this folder's row from `unsolved` to `solved <date>` in the bank's
 CATALOGUE.md, if there is one, once — later passes leave the first date standing.
 
@@ -782,10 +782,43 @@ def squashed(text):
     return "".join(text.split())
 
 
+def archived_solutions(c):
+    """Every archived code file: solutions/<stamp>/solution.<ext>, newest last.
+
+    Workspaces built before the archive grew folders wrote solutions/solution-<stamp>
+    .<ext> flat instead. Those still count — `wipe` consults this list before deleting
+    anything, and a solve is a solve — but nothing here renames or moves them. Someone
+    else's archive is not ours to reorganise on the way past."""
+    if not SOLUTIONS.exists():
+        return []
+    ext = entry_ext(c)
+    found = list(SOLUTIONS.glob(f"*/solution{ext}")) + list(SOLUTIONS.glob(f"solution-*{ext}"))
+    return sorted(found, key=solution_stamp)
+
+
+def solution_stamp(path):
+    """The YYYYMMDD-HHMMSS this solution was filed under — the folder's name in the
+    current layout, the filename's suffix in the legacy flat one. Both sort as time."""
+    if path.parent == SOLUTIONS:
+        return path.stem[len("solution-"):]
+    return path.parent.name
+
+
+def review_file(solution):
+    """Where the LLM post-mortem for this solution belongs.
+
+    Inside the solution's own folder, so a folder holds one attempt and what was said
+    about it. A legacy flat archive has no folder of its own and keeps the old sidecar
+    name — dropping a bare review.md into solutions/ would collide with every other."""
+    if solution.parent == SOLUTIONS:
+        return solution.parent / f"{solution.stem}.review.md"
+    return solution.parent / "review.md"
+
+
 def archived_twin(c, text):
-    """The first archived file whose code matches `text`, or None."""
+    """The first archived solution whose code matches `text`, or None."""
     want = squashed(text)
-    for p in sorted(SOLUTIONS.glob(f"*{entry_ext(c)}")) if SOLUTIONS.exists() else []:
+    for p in archived_solutions(c):
         try:
             if squashed(read(p)) == want:
                 return p
@@ -795,33 +828,31 @@ def archived_twin(c, text):
 
 
 def archive_solution(c):
-    """File the entry file under solutions/. Returns (path, is_new).
+    """File the entry file under solutions/<stamp>/. Returns (path, is_new).
 
-    Called on a 100% judge and nowhere else, so the archive means exactly one thing:
-    every file in it passed the whole suite at the moment it was written."""
+    Called on a 100% judge and nowhere else, so a folder in here means exactly one
+    thing: what it holds passed the whole suite at the moment it was written."""
     entry = ROOT / c["entry"]
-    text = read(entry)
-    twin = archived_twin(c, text)
+    twin = archived_twin(c, read(entry))
     if twin:
         return twin, False
-    SOLUTIONS.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    dest = SOLUTIONS / f"solution-{stamp}{entry_ext(c)}"
-    # Two different solutions inside the same second would otherwise overwrite each
-    # other — rare, but the archive is the thing `wipe` trusts before deleting.
+    folder = SOLUTIONS / stamp
+    # Two different solutions inside the same second would otherwise land in the same
+    # folder — rare, but the archive is what `wipe` trusts before it deletes.
     n = 2
-    while dest.exists():
-        dest = SOLUTIONS / f"solution-{stamp}-{n}{entry_ext(c)}"
+    while folder.exists():
+        folder = SOLUTIONS / f"{stamp}-{n}"
         n += 1
+    folder.mkdir(parents=True)
+    dest = folder / f"solution{entry_ext(c)}"
     shutil.copyfile(entry, dest)
     return dest, True
 
 
 def latest_solution(c):
-    if not SOLUTIONS.exists():
-        return None
-    return max(SOLUTIONS.glob(f"solution-*{entry_ext(c)}"), key=lambda p: p.name,
-               default=None)
+    found = archived_solutions(c)
+    return found[-1] if found else None
 
 
 def wipe(c, force=False):
@@ -843,7 +874,7 @@ def wipe(c, force=False):
         else:
             twin = archived_twin(c, text)
             if twin:
-                note = f"your attempt is archived as {twin.relative_to(ROOT)}"
+                note = f"your attempt is archived in {twin.parent.relative_to(ROOT)}"
             elif force:
                 note = "the previous attempt was discarded"
             else:
@@ -1161,7 +1192,7 @@ def review(c, solution, summary=None, tag=""):
     print(f"\n{B}Review of {solution.relative_to(ROOT)}{X} "
           f"{DIM}— an opinion, not a score{X}\n")
     print(text)
-    dest = solution.parent / f"{solution.stem}.review.md"
+    dest = review_file(solution)
     try:
         write(dest, text.rstrip("\n") + "\n")
         print(f"\n{DIM}saved to {dest.relative_to(ROOT)}{X}")
