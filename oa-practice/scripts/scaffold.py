@@ -4,7 +4,7 @@
     python3 scripts/scaffold.py <slug> [--dir DEST] [--lang cpp|python] [--tl 3000]
 
 Creates DEST/<slug>/ with oa.py, the run/judge/oa wrappers for both platforms,
-problem.json, README.md, a solution stub, tests/samples/, and .oa/gen.py plus
+problem.json, README.md, HINTS.md, a solution stub, tests/samples/, and .oa/gen.py plus
 .oa/ref/reference.py. The stub is saved twice — once as the entry file the user
 edits, once as .oa/stub.<ext>, which is what `oa.py wipe` restores from.
 
@@ -72,8 +72,9 @@ def main():
     cfg.update(name=a.slug, language=a.lang, entry=entry, time_limit_ms=a.tl)
     write(dest / "problem.json", json.dumps(cfg, indent=2) + "\n")
 
-    readme = dest / "README.md"
-    write(readme, readme.read_text(encoding="utf-8").replace("PROBLEM_SLUG", a.slug))
+    for skeleton in ("README.md", "HINTS.md"):
+        f = dest / skeleton
+        write(f, f.read_text(encoding="utf-8").replace("PROBLEM_SLUG", a.slug))
 
     # Record the interpreter running this script. It is a working Python 3 by
     # construction, which is more than can be said for anything named `python3` on

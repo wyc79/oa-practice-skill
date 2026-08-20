@@ -21,14 +21,16 @@ separate request and fine to fulfill.
 <slug>/
 ├── main.cpp / main.py  # I/O parsed and printed; solve() is a stub for the user
 ├── problem.json        # language, time limit, checker mode
-├── README.md           # restated statement, constraints, complexity target
+├── README.md           # restated statement, constraints, how tight the limit is
+├── HINTS.md            # SPOILERS — knowledge point, why the constraints force it,
+│                       #   related LeetCode problems. Written now, read later.
 ├── run.sh, run.cmd     # samples only, with diffs                    ("Run Code")
 ├── judge.sh, judge.cmd # all tests, prints k/n (p%) and nothing else  ("Submit")
 ├── oa.sh, oa.cmd       # any other harness command, same interpreter probe
 ├── oa.py               # harness engine (run / judge / gen / answers / case / selfcheck)
 ├── tests/samples/      # sample1.in, sample1.out, sample2.in, ...
 ├── solutions/          # every attempt that scored 100%, filed by judge, and any
-│                      #   solution-<stamp>.review.md the LLM post-mortem wrote
+│                       #   solution-<stamp>.review.md the LLM post-mortem wrote
 └── .oa/
     ├── gen.py          # declared constraint bounds + edge cases + randoms + stress
     ├── checker.py      # only when multiple outputs are valid
@@ -87,17 +89,39 @@ operations per second** — deliberately pessimistic, so the figure stays safe �
 | 22 | O(2ⁿ) |
 | 11 | O(n!) |
 
-That settles both the `--tl` value and the complexity target for the README. When the
+That settles both the `--tl` value and the complexity target — the target for
+`HINTS.md`, not the README; the split is the next section. When the
 constraints imply the intended solution — `n <= 2*10^5` wants O(n log n) — a limit
 generous enough to also let O(n²) through has quietly made the problem easier. If you
 fell back to Python, re-derive rather than scale: 30–50 ms is interpreter startup
 before a line runs, and at 30x a limit that cleanly separates O(n log n) from O(n²) in
 C++ can fail both.
 
-The scaffold also drops in a README skeleton and `.oa/gen.py` + `.oa/ref/reference.py`
-as a **worked example for a different problem**, each carrying a `TEMPLATE = True`
-line. Nothing runs until you have rewritten them and deleted that line — left alone
-they generate a clean, green, entirely wrong suite.
+The scaffold also drops in README and `HINTS.md` skeletons, and `.oa/gen.py` +
+`.oa/ref/reference.py` as a **worked example for a different problem**, each carrying a
+`TEMPLATE = True` line. Nothing runs until you have rewritten them and deleted that
+line — left alone they generate a clean, green, entirely wrong suite.
+
+**The README never names the knowledge point, the algorithm family, or the intended
+big-O.** `Target: O(n+m) topological sort` has handed over half the work before the
+user has finished reading the constraints — they came here to face the problem, and a
+line at the top telling them which chapter it is from is the one thing the harness can
+do that a real OA cannot. The README says how tight the limit is in words: whether a
+straightforward approach should fit, or whether the generator's sizes were picked to
+shut one out. That a bound was lowered because no reference could reach it does stay in
+the README — the harness owning a limitation is not a spoiler.
+
+Everything else goes into `HINTS.md`, behind its spoiler line, and **fill it in now
+rather than leaving the skeleton's comments** — you did the complexity reasoning a few
+paragraphs ago to pick `--tl`, and this is the file it belongs in. Three sections: the
+knowledge point with the traps it is testing, why the constraints force the intended
+complexity, and three to six related LeetCode problems from your own knowledge, closest
+first, each a number plus a one-line hook, premium ones marked, and the LeetCode
+original first and labelled as such when this problem is a reskin of one.
+
+When the statement is in Chinese, or the user is otherwise working bilingually, each
+related problem gets both titles — `210. Course Schedule II / 课程表 II` — and both
+links, leetcode.com and leetcode.cn, which share a slug. English only otherwise.
 
 ### 3. Write the main file — plumbing only
 

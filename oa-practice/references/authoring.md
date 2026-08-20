@@ -306,6 +306,39 @@ table and the plumbing check all consult that same checker, nothing else would h
 noticed. It is skipped, with a note, when every scored test has the same answer and
 there is nothing to cross.
 
+## HINTS.md
+
+The README is the problem; `HINTS.md` is everything you know about it. Nothing that
+would shorten the user's search belongs on the README side of that line — not the
+algorithm family, not the intended big-O, not "this is the classic two-pointer one".
+Write both at authoring time; the user opens the second one when they choose to.
+
+Tone: you are teaching after the attempt, not briefing before it. Say what the topic
+is and how it is normally implemented, then be concrete about the traps — *this* is
+where the value is, because the traps are what separate knowing the algorithm from
+getting it accepted. **List the ones `gen.py` actually generates a test for.** A trap
+with a test behind it is one the user will meet and can go and reproduce with
+`oa.sh case`; a trap you remembered from somewhere else is trivia, and padding the
+section with it makes the whole file cheaper to skim past.
+
+"Why the constraints force it" is a transcript of arithmetic you have already done: the
+naive complexity, the operation count it implies at the largest declared bound, why
+that misses the time limit, and what the intended complexity brings it down to. It is
+the answer to the question the user will actually ask, which is not "what is the
+algorithm" but "how was I supposed to know that from the constraint line".
+
+The related problems come from your own knowledge — three to six, closest first, each
+one a number, a title, and a one-line hook naming what it shares with this problem
+rather than restating it. Mark premium ones so nobody hits a paywall mid-practice. If
+this problem is a reskin of a LeetCode original, put that one first and label it, since
+it is the one place the user can compare their solution against everyone else's.
+
+Bilingual links when the statement is in Chinese, or when the user is working across
+both languages: give both titles (`210. Course Schedule II / 课程表 II`) and both links.
+The slug is identical on `leetcode.com` and `leetcode.cn`, so the second link is the
+first with the host swapped. English-only otherwise — an unasked-for second link on
+every row is noise.
+
 ## Harness commands
 
 ```

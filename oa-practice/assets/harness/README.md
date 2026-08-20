@@ -20,9 +20,13 @@
 
 ## Target
 
-<!-- Intended complexity, if the constraints imply one, e.g. O(n log n) for
-     n <= 2*10^5 in 3s. Note here if any bound was lowered from the statement
-     because no reference could reach it. -->
+<!-- How comfortably the limit is meant to be met, in words: whether a straightforward
+     approach is expected to fit, or whether the generator's sizes were picked to shut
+     one out. No algorithm names and no big-O — both hand over the answer, and they are
+     in HINTS.md instead, behind a spoiler line, for after your first attempt.
+
+     Note here if a bound was lowered from the statement because no reference could
+     reach it. That is the harness admitting a limitation, not a hint. -->
 
 ## Running it
 
@@ -53,5 +57,9 @@ idiom, edge cases and likely follow-up questions, saving it next to the solution
 needs `OA_REVIEW_API_KEY` in a `.env` here or in the folder above — never commit that
 file. Without a key you get one line and your score, unchanged.
 
-Two places will spoil you: `.oa/` holds the generator and the reference solutions, and
-`tests/hidden/*.out` holds the expected answers.
+`HINTS.md` is the spoiler door, and it is meant to be opened — eventually. It names the
+knowledge point, shows why the constraints rule out the naive approach, and lists
+related problems to practise next. Try the problem cold first; it will still be there.
+
+Two places will spoil you without meaning to: `.oa/` holds the generator and the
+reference solutions, and `tests/hidden/*.out` holds the expected answers.
