@@ -381,17 +381,34 @@ while the table grows a line per problem forever. If a repo already keeps its ta
 is not yours to restructure on the way past.
 
 Columns: `#`, the problem's title (both languages when the statement is bilingual), a
-link to the folder, language, source, date added, and status, left `unsolved`. Match
-the columns the table already has rather than this list, with one exception —
-**never add a topic or knowledge-point column, and leave one empty if the table
-already has it.** A catalogue that names the topic tells the user what the problem is
-about before they have tried it, which is exactly what `HINTS.md` exists to keep behind
-a door; a column that spoils every row at once is worse than the README line the door
-was built for.
+link to the folder, language, source, date added, status left `unsolved`, then
+`Category` and `Notes` **left empty**. Those last two are the user's own — their tags,
+their difficulty scale, their revisit dates, whatever they keep — and neither this
+skill nor the harness ever writes into them. Match the columns a table already has
+rather than this list, and do not retrofit the two free columns onto one that lacks
+them.
 
-Never flip the status yourself either: it tracks the user, not the workspace, and the
-only thing that moves it off `unsolved` is their own first `judge` at 100%. Everything
-you verified in step 7 was the harness agreeing with itself.
+The one column to refuse outright: **never add a topic or knowledge-point column, and
+leave one empty if the table already has it.** A catalogue that names the topic tells
+the user what each problem is about before they have tried it, which is exactly what
+`HINTS.md` exists to keep behind a door — and a column spoils every row at once.
+
+That reasoning belongs here and not in their repo. **The catalogue file is a heading
+and the table**: no note explaining the missing column, no instructions for the status
+column, nothing that has to be skipped to reach a row. It is a file that grows by one
+line per problem forever.
+
+**Never flip the status yourself.** It tracks the user, not the workspace, and the
+harness does it for them: a `judge` scoring 100% rewrites that one cell to
+`solved <date>`, once, and leaves the first date standing on every later pass.
+
+Which is a constraint on step 7 as much as a promise. **Never run `judge` with a
+working solution in the entry file.** The second-implementation gate is
+`selfcheck --entry`, which scores a stand-in and never touches `main` — running
+`judge` on a solution you wrote flips the user's catalogue and files your code in
+`solutions/` as though they had solved it, and hands over a workspace that says they
+did. If it happens anyway, put the status back to `unsolved` and delete the archived
+copy before handing over.
 
 Creating the bank itself is different work — the user asks for one, or the parent is
 empty or a bare `git init`. It is one-time setup with a checklist of its own: read

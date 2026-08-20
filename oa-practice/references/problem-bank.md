@@ -69,6 +69,11 @@ clean workspaces plus everyone's `solutions/`. **A fresh clone has no entry file
 run `./oa.sh wipe` in a problem folder to materialize one from the committed
 `.oa/stub.<ext>`.
 
+That first 100% also flips this problem's row in [CATALOGUE.md](CATALOGUE.md) from
+`unsolved` to `solved <date>`; later passes leave the date alone, because it records
+the first time you got there. `Category` and `Notes` in that table are yours to fill —
+nothing here writes to them.
+
 ## Spoilers, and where they live
 
 - `<slug>/HINTS.md` — the knowledge point, why the constraints force it, and related
@@ -88,21 +93,29 @@ Fill the placeholders in rather than shipping them. Trim rows the bank will not 
 
 ## CATALOGUE.md
 
-Header plus an empty table. Nothing else — it exists to grow.
+A heading and an empty table. **Nothing else** — no note about how the columns work,
+no explanation of what is missing from them. This is the file that grows by a line per
+problem forever, and every line that is not a row is one more thing to scroll past.
 
 ```markdown
 # Catalogue
 
-Status is yours to flip: a problem is `solved` once *you* have scored 100% on it.
-Nothing here names the topic — that is in each folder's `HINTS.md`, on purpose.
-
-| # | Problem | Folder | Lang | Source | Added | Status |
-|---|---------|--------|------|--------|-------|--------|
+| # | Problem | Folder | Lang | Source | Added | Status | Category | Notes |
+|---|---------|--------|------|--------|-------|--------|----------|-------|
 ```
 
-Columns are fixed by the guidance in SKILL.md — in particular there is **no topic
-column**, and adding one later would spoil every row at once. Titles carry both
-languages when the statements are bilingual (`210. Course Schedule II / 课程表 II`).
+`Status` is written `unsolved` when the row is appended, and the first `judge` that
+scores 100% in that folder rewrites it to `solved <date>`. Nothing else writes it.
+
+`Category` and `Notes` are created empty and stay empty: they belong to whoever owns
+the repo, for whatever classification and remarks they keep, and neither the skill nor
+the harness ever fills or reorders them.
+
+There is deliberately **no topic column** — it would name the knowledge point of every
+problem in the repo at once, which is the thing each folder's `HINTS.md` exists to keep
+behind a spoiler line. That reasoning stays here, in the skill's own documentation; do
+not write it into the catalogue as a note. Titles carry both languages when the
+statements are bilingual (`210. Course Schedule II / 课程表 II`).
 
 ## .gitattributes
 
@@ -165,5 +178,6 @@ OA_REVIEW_BASE_URL=
   If it *is* already tracked, `git rm --cached` it, or the ignore rule does nothing.
 - `git status` in a solved folder shows `solutions/` as untracked-and-addable, not
   ignored.
-- The CATALOGUE table has no topic column.
+- The CATALOGUE table has no topic column, and its `Category` / `Notes` columns are
+  empty.
 - The README's placeholders are filled in.
