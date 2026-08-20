@@ -1,5 +1,7 @@
 @echo off
 rem Submit: run every hidden test and print a score. This is your "Submit" button.
+rem Arguments are forwarded to oa.py: --reveal N, --force, and --llm (an LLM
+rem post-mortem after a 100% score; opt-in, and it sends your code off the machine).
 setlocal
 cd /d "%~dp0"
 if defined OA_PYTHON goto :go

@@ -27,7 +27,8 @@ separate request and fine to fulfill.
 ├── oa.sh, oa.cmd       # any other harness command, same interpreter probe
 ├── oa.py               # harness engine (run / judge / gen / answers / case / selfcheck)
 ├── tests/samples/      # sample1.in, sample1.out, sample2.in, ...
-├── solutions/          # every attempt that scored 100%, filed by judge
+├── solutions/          # every attempt that scored 100%, filed by judge, and any
+│                      #   solution-<stamp>.review.md the LLM post-mortem wrote
 └── .oa/
     ├── gen.py          # declared constraint bounds + edge cases + randoms + stress
     ├── checker.py      # only when multiple outputs are valid
@@ -314,6 +315,24 @@ never sees a stray `\r`. Three caveats:
 `answers`, which is a separate resumable command for exactly that reason. Run it
 yourself before handing over so the user never waits.
 
+**LLM post-mortem** (`./judge.sh --llm`, and `./oa.sh review` for a solution already
+in `solutions/`): on a 100% score and never otherwise, send the README, the solution
+that just passed and judge's own timing and scaling numbers to an LLM, and print what
+comes back — complexity against the stated target, idiom and simplification, edge
+cases inside the constraints that the generator never tried, and the follow-ups an
+interviewer would reach for. The reply is saved beside the solution as
+`solution-<stamp>.review.md`. One line says so before any code leaves the machine, and
+nothing is sent without the flag.
+
+Configure with `OA_REVIEW_API_KEY`, plus optional `OA_REVIEW_MODEL` and
+`OA_REVIEW_BASE_URL`, read from a `.env` in the problem folder, then one in the parent,
+then real environment variables. The default is the Anthropic Messages API; set a base
+URL and it speaks OpenAI-compatible chat completions instead. **A `.env` is never
+committed.** The whole layer is best-effort on purpose: no key, an unreadable `.env`, a
+wrong endpoint or a dead network each cost one line and leave the score and the exit
+code exactly as the judge computed them. A harness that fails a submit over someone
+else's outage would be worse than one that never had opinions.
+
 **The redo loop**: a 100% `judge` copies the entry file into `solutions/` as
 `solution-<date>-<time>.<ext>`, and skips it when an equivalent one is already there —
 whitespace is ignored, so re-running a formatter does not file a second copy.
@@ -340,7 +359,8 @@ verified in step 7 was the harness agreeing with itself.
 
 Setting one of these up from scratch, the root `.gitignore` wants two more lines
 beyond the usual: `main.cpp` / `main.py`, so the repo holds problems rather than
-answers (see the redo loop above), and `.env`, which is never committed.
+answers (see the redo loop above), and `.env`, so nobody's review key is ever pushed
+with them.
 
 ## Reference
 

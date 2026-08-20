@@ -9,10 +9,12 @@ unit test of any single function; they are only wrong at the exit code.
 The problem under test is "sum an array", small enough that a full judge run is a
 fraction of a second and every reference is exact.
 """
+import http.server
 import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -86,15 +88,19 @@ def write(path, text):
         f.write(text)
 
 
-def oa(ws, *args, expect=None):
+def oa(ws, *args, expect=None, env=None):
     """Run a harness command. `expect` asserts the exit code, since for most of these
     the exit code *is* the behaviour under test."""
     # utf-8 explicitly: oa.py pins its streams to utf-8, so decoding by the system
     # locale would turn every em-dash into mojibake on a cp936/cp1252 console and make
     # any assertion about the wording quietly unreliable.
+    # OA_REVIEW_* is stripped rather than inherited: a developer with a real key
+    # exported must not have the suite quietly phone home and bill them. Tests that
+    # want the review layer configured pass `env` explicitly.
+    clean = {k: v for k, v in os.environ.items() if not k.startswith("OA_REVIEW_")}
     p = subprocess.run([sys.executable, "oa.py", *args], cwd=ws, capture_output=True,
                        text=True, encoding="utf-8", errors="replace",
-                       env={**os.environ, "NO_COLOR": "1"})
+                       env={**clean, "NO_COLOR": "1", **(env or {})})
     if expect is not None:
         assert p.returncode == expect, (
             f"expected exit {expect}, got {p.returncode}\n--- stdout ---\n{p.stdout}"
@@ -872,3 +878,189 @@ def test_wipe_does_not_need_a_compilable_entry(ws):
     write(ws / "main.py", "this is not python(")
     oa(ws, "wipe", "--force", expect=0)
     assert (ws / "main.py").read_text() == (ws / ".oa" / "stub.py").read_text()
+
+
+# ------------------------------------------------------------- LLM review
+# `judge --llm` and `review` are the only network in the harness, and the property
+# worth pinning is that they cannot cost anything: whatever happens to the endpoint,
+# the score and the exit code are the ones the judge already computed. The happy path
+# runs against a local server, so none of this needs a key or a bill.
+
+REPLY = "## Complexity\n\nO(n) time, O(n) space, which is the stated target.\n"
+
+
+@pytest.fixture
+def fake_llm():
+    """A local OpenAI-compatible endpoint. Yields (base_url, requests_seen, control);
+    set control["status"] to make it answer with an error instead."""
+    seen, control = [], {"status": 200}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("content-length") or 0)
+            seen.append({"path": self.path,
+                         "auth": self.headers.get("Authorization"),
+                         "body": json.loads(self.rfile.read(n) or b"{}")})
+            if control["status"] != 200:
+                body = b'{"error": {"message": "nope"}}'
+            else:
+                body = json.dumps({"choices": [{"message": {"content": REPLY}}]}).encode()
+            self.send_response(control["status"])
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{srv.server_address[1]}/v1", seen, control
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def dotenv(path, url, key="test-key", model="test-model"):
+    write(path / ".env", f"OA_REVIEW_API_KEY={key}\nOA_REVIEW_BASE_URL={url}\n"
+                         f"OA_REVIEW_MODEL={model}\n")
+
+
+def reviews(ws):
+    return sorted(p.name for p in (ws / "solutions").glob("*.review.md"))
+
+
+def test_llm_review_prints_the_reply_and_saves_it(ws, fake_llm):
+    url, seen, _ = fake_llm
+    dotenv(ws, url)
+    p = oa(ws, "judge", "--llm", expect=0)
+    assert REPLY.strip() in out(p)
+    assert "leaves this machine" in out(p)
+    assert len(reviews(ws)) == 1
+    assert REPLY.strip() in (ws / "solutions" / reviews(ws)[0]).read_text()
+    # The review sits beside the solution it is about, sharing its stamp.
+    assert reviews(ws)[0] == solutions(ws)[0].replace(".py", ".review.md")
+    assert len(seen) == 1
+
+
+def test_the_review_prompt_carries_readme_solution_and_timings(ws, fake_llm):
+    url, seen, _ = fake_llm
+    dotenv(ws, url)
+    write(ws / "README.md", "# p\n\n## Target\n\nO(n) for n <= 100.\n")
+    oa(ws, "judge", "--llm", expect=0)
+    sent = seen[0]["body"]["messages"][0]["content"]
+    assert "O(n) for n <= 100" in sent          # the README
+    assert "def solve(a)" in sent                # the solution that passed
+    assert "Scaling" in sent                     # judge's own timing report
+    assert seen[0]["auth"] == "Bearer test-key"
+    assert seen[0]["path"].endswith("/chat/completions")
+
+
+def test_a_red_suite_gets_no_review(ws, fake_llm):
+    url, seen, _ = fake_llm
+    dotenv(ws, url)
+    write(ws / "main.py", WRONG)
+    p = oa(ws, "judge", "--llm", expect=1)
+    assert "only runs on a 100% score" in out(p)
+    assert seen == []
+    # ...and judge is otherwise exactly what it was: score, and the route to a diff.
+    assert "--reveal 1" in out(p)
+
+
+def test_the_flag_is_the_only_thing_that_reviews(ws, fake_llm):
+    url, seen, _ = fake_llm
+    dotenv(ws, url)
+    oa(ws, "judge", expect=0)
+    assert seen == []
+    assert reviews(ws) == []
+
+
+def test_review_reads_the_latest_archived_solution(ws, fake_llm):
+    url, seen, _ = fake_llm
+    dotenv(ws, url)
+    oa(ws, "judge", expect=0)
+    oa(ws, "wipe", expect=0)          # entry file is the stub again
+    p = oa(ws, "review", expect=0)     # ...and review still has something to talk about
+    assert REPLY.strip() in out(p)
+    assert "def solve(a)" in seen[0]["body"]["messages"][0]["content"]
+    assert len(reviews(ws)) == 1
+
+
+def test_review_without_an_archived_solution_exits_zero(ws, fake_llm):
+    url, _, _ = fake_llm
+    dotenv(ws, url)
+    assert "nothing to review" in out(oa(ws, "review", expect=0))
+
+
+def test_the_nearest_env_wins(ws, fake_llm):
+    url, seen, _ = fake_llm
+    dotenv(ws.parent, "http://127.0.0.1:1/v1", key="parent-key")
+    dotenv(ws, url, key="folder-key")
+    oa(ws, "judge", "--llm", expect=0)
+    assert seen[0]["auth"] == "Bearer folder-key"
+
+
+def test_the_parent_env_serves_a_folder_without_one(ws, fake_llm):
+    url, seen, _ = fake_llm
+    dotenv(ws.parent, url, key="bank-key")
+    oa(ws, "judge", "--llm", expect=0)
+    assert seen[0]["auth"] == "Bearer bank-key"
+
+
+def test_real_env_vars_work_without_any_dotenv(ws, fake_llm):
+    url, seen, _ = fake_llm
+    oa(ws, "judge", "--llm", expect=0,
+       env={"OA_REVIEW_API_KEY": "env-key", "OA_REVIEW_BASE_URL": url,
+            "OA_REVIEW_MODEL": "m"})
+    assert seen[0]["auth"] == "Bearer env-key"
+
+
+# Everything below is a way for the review to fail. None of them may cost a score.
+
+def test_no_key_costs_one_line_not_the_score(ws):
+    p = oa(ws, "judge", "--llm", expect=0)
+    assert "Score: 9/9 (100%)" in out(p)
+    assert "OA_REVIEW_API_KEY" in out(p)
+    assert len(solutions(ws)) == 1     # archiving is unaffected
+
+
+def test_no_key_leaves_review_exiting_zero(ws):
+    oa(ws, "judge", expect=0)
+    p = oa(ws, "review", expect=0)
+    assert "OA_REVIEW_API_KEY" in out(p)
+    assert ".env" in out(p)
+
+
+def test_an_unreachable_endpoint_costs_one_line(ws):
+    env = {"OA_REVIEW_API_KEY": "k", "OA_REVIEW_BASE_URL": "http://127.0.0.1:1/v1",
+           "OA_REVIEW_MODEL": "m"}
+    p = oa(ws, "judge", "--llm", expect=0, env=env)
+    assert "Score: 9/9 (100%)" in out(p)
+    assert "no review" in out(p)
+    assert reviews(ws) == []
+    assert out(oa(ws, "review", expect=0, env=env)).count("no review") == 1
+
+
+def test_a_non_2xx_response_costs_one_line(ws, fake_llm):
+    url, _, control = fake_llm
+    control["status"] = 500
+    dotenv(ws, url)
+    p = oa(ws, "judge", "--llm", expect=0)
+    assert "Score: 9/9 (100%)" in out(p)
+    assert "500" in out(p) and "no review" in out(p)
+
+
+def test_an_unparseable_env_is_ignored_rather_than_fatal(ws):
+    write(ws / ".env", "this is not a key=value file\n\x00\x00\n[section]\n")
+    p = oa(ws, "judge", "--llm", expect=0)
+    assert "Score: 9/9 (100%)" in out(p)
+    assert "OA_REVIEW_API_KEY" in out(p)
+
+
+def test_a_custom_endpoint_without_a_model_says_so(ws):
+    p = oa(ws, "judge", "--llm", expect=0,
+           env={"OA_REVIEW_API_KEY": "k", "OA_REVIEW_BASE_URL": "http://127.0.0.1:1/v1"})
+    assert "OA_REVIEW_MODEL" in out(p)
+    assert "Score: 9/9 (100%)" in out(p)

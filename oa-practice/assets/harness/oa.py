@@ -10,6 +10,8 @@ Usage (or ./oa.sh <cmd> / .\oa.cmd <cmd>, which find a working interpreter first
     python3 oa.py selfcheck        # references vs samples, coverage, staleness
     python3 oa.py selfcheck --entry _check.cpp  # ...and the entry file's I/O
     python3 oa.py wipe             # entry file back to the stub, to solve it again
+    python3 oa.py judge --llm      # ...and, on a 100% score only, an LLM post-mortem
+    python3 oa.py review           # that post-mortem on the latest archived solution
 
 `run` explains every failing sample; `judge` explains none, because the expected
 output of a hidden test is the answer. `--reveal N` overrides either way.
@@ -21,12 +23,18 @@ same build() and so to the same toolchain: `_check.cpp` for the default C++ work
 A 100% `judge` files the entry file away under solutions/, which is what makes `wipe`
 safe to run: it refuses to overwrite an attempt the archive has not already seen.
 
+`--llm` and `review` are the only network in here, they are opt-in, and they are
+best-effort by construction: no key, no .env, no network, or a bad endpoint each cost
+one line of output and change nothing about the score or the exit code.
+
 Config lives in problem.json. Hidden generator lives in .oa/, reference solutions
 in .oa/ref/.
 """
 import argparse
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import math
 import os
@@ -37,6 +45,9 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -840,6 +851,208 @@ def wipe(c, force=False):
     print(f"restored {c['entry']} from .oa/stub{entry_ext(c)} {DIM}({note}){X}")
 
 
+# ------------------------------------------------------------- LLM review
+# Strictly optional, and strictly best-effort. `judge --llm` and `review` are the only
+# two things here that touch the network, and neither is allowed to change a score, an
+# exit code, or anything on disk under tests/. A missing key, an unreadable .env, a
+# wrong endpoint or a dead network all end the same way: one line, and the judge run
+# you already have. Grading a solution and having an opinion about it are different
+# jobs, and only the first one is this harness's promise.
+
+REVIEW_URL = "https://api.anthropic.com/v1/messages"
+REVIEW_MODEL = "claude-opus-5"
+REVIEW_MAX_TOKENS = 16000
+REVIEW_TIMEOUT = 180
+
+REVIEW_ASK = """This solution has just passed every test in a practice harness for a
+coding-assessment problem, so it is correct on that suite — do not re-derive whether
+it is right, and do not rewrite it for me. Review it the way someone would who is
+about to ask the author about it.
+
+Cover these, in order, and skip any heading you have nothing concrete to say under:
+
+1. **Complexity against the target.** The README states the intended complexity. Give
+   this solution's actual time and space complexity and say whether it hits that
+   target. The scaling report below is measured; if it disagrees with your reading of
+   the code, say so and say which you believe.
+2. **Idiom and simplification.** What an experienced reviewer in this language would
+   write differently, as concrete edits. Skip pure style preferences.
+3. **Edge-case robustness.** Inputs *inside* the stated constraints that would break
+   this code, and anything it survives only because the generator did not think to try
+   it — overflow, empty input, ties, the largest bound, a degenerate shape.
+4. **Likely follow-ups.** The two or three questions this solution invites in an
+   interview, each with a one-line sketch of the answer.
+
+Be specific and brief. Quote the expression or name the line you mean."""
+
+
+def env_file(path):
+    """KEY=value pairs out of a .env. Anything unreadable or malformed reads as empty:
+    the review layer is best-effort, and a stray byte in a dotfile must never be the
+    thing that stops a judge run."""
+    out = {}
+    try:
+        text = read(path)
+    except Exception:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        k, sep, v = line.partition("=")
+        if not sep:
+            continue
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+            v = v[1:-1]
+        out[k.strip()] = v
+    return out
+
+
+def review_config():
+    """The problem folder's .env, then the parent's, then the real environment.
+
+    Nearest wins, so a bank-wide key in the repo root serves every problem under it
+    while one folder can still point somewhere else. Never commit either .env."""
+    layers = [env_file(ROOT / ".env"), env_file(ROOT.parent / ".env"), os.environ]
+    def pick(name):
+        for layer in layers:
+            if layer.get(name):
+                return layer[name]
+        return None
+    return {"key": pick("OA_REVIEW_API_KEY"),
+            "model": pick("OA_REVIEW_MODEL"),
+            "base": pick("OA_REVIEW_BASE_URL")}
+
+
+def post_json(url, headers, payload):
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"),
+        headers={**headers, "content-type": "application/json"})
+    with urllib.request.urlopen(req, timeout=REVIEW_TIMEOUT) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+def ask_model(cfg, prompt):
+    """(text, None) on success, (None, one-line reason) otherwise. Never raises.
+
+    Two dialects: the Anthropic Messages API by default, and OpenAI-compatible chat
+    completions whenever OA_REVIEW_BASE_URL is set — which covers every local runner
+    and proxy worth pointing this at, without a dependency."""
+    if cfg["base"]:
+        url = cfg["base"].rstrip("/")
+        if not url.endswith("/chat/completions"):
+            url += "/chat/completions"
+        if not cfg["model"]:
+            return None, "set OA_REVIEW_MODEL — a custom endpoint has no default model"
+        headers = {"Authorization": f"Bearer {cfg['key']}"}
+        payload = {"model": cfg["model"], "max_tokens": REVIEW_MAX_TOKENS,
+                   "messages": [{"role": "user", "content": prompt}]}
+    else:
+        url = REVIEW_URL
+        headers = {"x-api-key": cfg["key"], "anthropic-version": "2023-06-01"}
+        payload = {"model": cfg["model"] or REVIEW_MODEL,
+                   "max_tokens": REVIEW_MAX_TOKENS,
+                   "messages": [{"role": "user", "content": prompt}]}
+
+    host = urllib.parse.urlsplit(url).netloc or url
+    print(f"{DIM}  sending the README, your solution and the timings to {host} — "
+          f"your code leaves this machine{X}")
+    try:
+        data = post_json(url, headers, payload)
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = json.loads(e.read().decode("utf-8", "replace"))["error"]["message"]
+        except Exception:
+            pass
+        return None, f"{host} answered {e.code}{f': {detail[:200]}' if detail else ''}"
+    except urllib.error.URLError as e:
+        return None, f"could not reach {host}: {e.reason}"
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+
+    try:
+        if cfg["base"]:
+            text = data["choices"][0]["message"]["content"]
+        else:
+            if data.get("stop_reason") == "refusal":
+                return None, "the model declined to answer"
+            text = "".join(b.get("text", "") for b in data.get("content", [])
+                           if b.get("type") == "text")
+    except (KeyError, IndexError, TypeError):
+        return None, f"{host} sent a reply in a shape this harness does not know"
+    text = (text or "").strip()
+    return (text, None) if text else (None, "the reply came back empty")
+
+
+def uncoloured(text):
+    return re.sub(r"\033\[[0-9;]*m", "", text)
+
+
+def capture(fn, *args):
+    """Run a printing function, keep what it printed. Used so `judge --llm` can hand
+    the scaling report to the reviewer and still print it verbatim."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        fn(*args)
+    return buf.getvalue()
+
+
+def review_prompt(c, solution, summary):
+    readme = ""
+    try:
+        readme = read(ROOT / "README.md").strip()
+    except Exception:
+        pass
+    parts = [REVIEW_ASK, ""]
+    parts += [f"<problem name=\"{c.get('name', 'problem')}\" "
+              f"time-limit-ms=\"{c['time_limit_ms']}\">",
+              readme or "(no README was written for this problem)", "</problem>", ""]
+    parts += [f"<solution language=\"{c['language']}\" file=\"{solution.name}\">",
+              read(solution).rstrip(), "</solution>", ""]
+    parts += ["<judge-report>",
+              (summary or "").strip() or
+              "(not available — this is a review of an archived solution, with no "
+              "fresh judge run behind it)",
+              "</judge-report>"]
+    return "\n".join(parts)
+
+
+def review(c, solution, summary=None, tag=""):
+    """Print an LLM post-mortem and save it beside the solution. Always returns None,
+    always leaves the exit code alone — every failure path here is one line."""
+    def note(msg):
+        print(f"{DIM}{tag}{msg}{X}")
+
+    cfg = review_config()
+    if not cfg["key"]:
+        note("no review — set OA_REVIEW_API_KEY in a .env here or in the folder above "
+             "(never commit it)")
+        return
+    try:
+        prompt = review_prompt(c, solution, summary)
+    except Exception as e:
+        note(f"no review — could not assemble the prompt: {type(e).__name__}: {e}")
+        return
+    text, why = ask_model(cfg, prompt)
+    if text is None:
+        note(f"no review — {why}")
+        return
+
+    print(f"\n{B}Review of {solution.relative_to(ROOT)}{X} "
+          f"{DIM}— an opinion, not a score{X}\n")
+    print(text)
+    dest = solution.parent / f"{solution.stem}.review.md"
+    try:
+        write(dest, text.rstrip("\n") + "\n")
+        print(f"\n{DIM}saved to {dest.relative_to(ROOT)}{X}")
+    except Exception as e:
+        note(f"printed but not saved: {type(e).__name__}: {e}")
+
+
 # ---------------------------------------------------------------- reporting
 
 def clip(s, lines=15, width=120):
@@ -1424,7 +1637,7 @@ def selfcheck(c, entry=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["run", "judge", "gen", "answers", "case",
-                                    "selfcheck", "wipe"])
+                                    "selfcheck", "wipe", "review"])
     ap.add_argument("name", nargs="?")
     ap.add_argument("--reveal", type=int, default=None,
                     help="how many failing tests to explain in full "
@@ -1434,6 +1647,10 @@ def main():
     ap.add_argument("--entry", help="selfcheck: score this known-correct solution instead "
                                     "of the stub, to prove the entry file's I/O matches "
                                     "the generator and the reference")
+    ap.add_argument("--llm", action="store_true",
+                    help="judge: after a 100% score, send the README, the solution and "
+                         "the timings to an LLM for a post-mortem. Off by default; your "
+                         "code leaves the machine when it is on")
     a = ap.parse_args()
     c = cfg()
 
@@ -1459,6 +1676,17 @@ def main():
     # entry file does not work, and a stub that fails to compile is a normal state.
     if a.cmd == "wipe":
         wipe(c, force=a.force)
+        return
+
+    # Also before build(): reviewing what is already in solutions/ has nothing to do
+    # with whatever is in the entry file right now, which may be a stub or a wreck.
+    if a.cmd == "review":
+        latest = latest_solution(c)
+        if not latest:
+            print(f"{DIM}nothing to review — solutions/ is empty, and a 100% judge is "
+                  f"what fills it{X}")
+            return
+        review(c, latest)
         return
 
     argv = build(c)
@@ -1499,12 +1727,21 @@ def main():
     # — and a harness that volunteers the diff has quietly turned Submit into Run.
     p, t, stats, _ = execute(c, argv, ts, 0 if a.reveal is None else a.reveal, "Score")
     if p == t and t:
-        complexity_report(c, stats)
+        # Captured rather than printed straight out, so `--llm` can hand the reviewer
+        # the same scaling numbers the user is reading. Printed verbatim either way.
+        summary = capture(complexity_report, c, stats)
+        print(summary, end="")
         kept, fresh = archive_solution(c)
         rel = kept.relative_to(ROOT)
         print(f"\n{G}archived {rel}{X}" if fresh else
               f"\n{DIM}already archived as {rel} — not filing a second copy{X}")
-    elif a.reveal is None:
+        if a.llm:
+            review(c, kept, uncoloured(summary), tag="--llm: ")
+    elif a.llm:
+        # The post-mortem is about a solution, and a red suite has not produced one.
+        # Say so rather than leaving the flag looking like it did nothing.
+        print(f"{DIM}--llm: no review — the post-mortem only runs on a 100% score{X}")
+    if not (p == t and t) and a.reveal is None:
         # But this is still a practice tool, and a score with no route to a diff is a
         # dead end. Name the two ways through, once, without printing any of it.
         print(f"{DIM}  --reveal 1 explains the first failure; "

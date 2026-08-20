@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 # Submit: run every hidden test and print a score. Your "Submit" button.  (Windows: judge.cmd)
+# Arguments are forwarded to oa.py: --reveal N, --force, and --llm (an LLM post-mortem
+# after a 100% score; opt-in, and it sends your code off the machine).
 cd "$(dirname "$0")" || exit 1
 
 # See run.sh — neither `python3` nor `python` nor `py` is reliably an interpreter, so

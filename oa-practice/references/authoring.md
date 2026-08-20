@@ -321,6 +321,8 @@ there is nothing to cross.
 ./oa.sh selfcheck --entry _check.cpp  # ...and the plumbing — the last gate before hand-over
 ./oa.sh wipe              # entry file back to the stub, to solve the problem cold again
 ./oa.sh wipe --force      # ...discarding an attempt that never reached solutions/
+./judge.sh --llm          # ...and, on a 100% score only, an LLM post-mortem
+./oa.sh review            # that post-mortem on the latest archived solution, no re-judge
 ```
 
 Windows: `.\run.cmd`, `.\judge.cmd`, `.\oa.cmd <cmd>`. All three wrappers forward to
@@ -414,6 +416,33 @@ Each wrapper probes for a working Python 3 rather than assuming `python3` resolv
 one — it does not on Windows, where `python3.exe` is usually the Microsoft Store stub
 and `py` may not exist at all. `oa.sh`/`oa.cmd` exist so the authoring commands get the
 same probe the two buttons get. Set `OA_PYTHON` to override.
+
+## LLM review
+
+`judge --llm` and `review` are the only two commands that touch the network, and both
+are opt-in. `--llm` runs the post-mortem after a 100% score and prints one line instead
+on any lower one; `review` does the same for the newest file in `solutions/` without
+re-running anything. What goes out is the folder's `README.md`, the solution itself, and
+judge's timing and scaling summary; what comes back is printed and written to
+`solutions/solution-<stamp>.review.md`. A line naming the host is printed before the
+request, because sending someone's code somewhere should never be silent.
+
+| Variable | |
+|---|---|
+| `OA_REVIEW_API_KEY` | required; nothing is sent without it |
+| `OA_REVIEW_MODEL` | optional on the Anthropic API, required with a custom base URL |
+| `OA_REVIEW_BASE_URL` | optional; set it to speak OpenAI-compatible chat completions |
+
+Each is looked up in `<problem>/.env`, then `<parent>/.env`, then the real environment,
+nearest first — so one key at the root of a problem bank serves every folder under it,
+and a single problem can still point somewhere else. **Neither `.env` is ever
+committed**; a problem-bank repo must gitignore it.
+
+Every failure in this layer is one line of output and nothing else. A missing key, an
+unreadable `.env`, a bad endpoint, a non-2xx reply, a timeout, a refusal: `judge --llm`
+still prints its score and exits with the status the suite earned, and `review` exits
+zero. Scoring never depends on any of it — the review is an opinion printed after the
+grading is over, and it is not allowed to become a way for a submit to fail.
 
 ## Scaling report
 
