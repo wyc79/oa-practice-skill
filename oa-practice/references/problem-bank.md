@@ -132,7 +132,7 @@ Append these to whatever is already there.
 ```
 # The entry files are the user's own attempt. Keeping them out means the repo holds
 # problems rather than answers, and a clone hands you the work instead of the result.
-# `oa.py wipe` materializes one from the committed .oa/stub.<ext>.
+# `./oa.sh wipe` materializes one from the committed .oa/stub.<ext>.
 main.cpp
 main.py
 
