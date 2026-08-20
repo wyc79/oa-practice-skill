@@ -12,6 +12,7 @@ fraction of a second and every reference is exact.
 import http.server
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -166,6 +167,55 @@ def test_scaffold_dots_the_internal_directory(raw):
     assert (raw / ".oa" / "ref" / "reference.py").exists()
     assert (raw / ".oa" / "python-path").exists()
     assert not (raw / "oa-internal").exists()
+
+
+# --------------------------------------------------- the skeletons scaffold writes
+# The README is the problem and HINTS.md is everything known about it. The split only
+# works if the README skeleton does not prompt for the answer, so the wording of that
+# one section is worth a test — it is the thing that quietly drifts back.
+
+def test_scaffold_writes_hints_beside_the_readme(tmp_path):
+    subprocess.run([sys.executable, str(SCAFFOLD), "zigzag-walk", "--dir", str(tmp_path),
+                    "--lang", "python"], check=True, capture_output=True)
+    ws = tmp_path / "zigzag-walk"
+    readme, hints = (ws / "README.md").read_text(), (ws / "HINTS.md").read_text()
+    assert readme.startswith("# zigzag-walk\n")
+    assert hints.startswith("# zigzag-walk — hints\n")
+    assert "PROBLEM_SLUG" not in readme and "PROBLEM_SLUG" not in hints
+
+
+def test_the_hints_skeleton_asks_for_its_three_sections(raw):
+    hints = (raw / "HINTS.md").read_text()
+    assert "Spoilers ahead" in hints
+    for section in ("## Knowledge point", "## Why the constraints force it",
+                    "## Related problems on LeetCode"):
+        assert section in hints, section
+    # The bilingual entry is shown rather than described, so the shape — both titles,
+    # both hosts, one slug — is on hand instead of remembered.
+    assert "leetcode.com/problems/course-schedule-ii/" in hints
+    assert "leetcode.cn/problems/course-schedule-ii/" in hints
+    assert "课程表 II" in hints
+
+
+def test_the_readme_skeleton_keeps_its_sections(raw):
+    readme = (raw / "README.md").read_text()
+    for section in ("## Input", "## Output", "## Constraints", "## Target",
+                    "## Running it"):
+        assert section in readme, section
+
+
+def test_the_readme_target_section_gives_nothing_away(raw):
+    readme = (raw / "README.md").read_text()
+    target = readme.split("## Target", 1)[1].split("\n## ", 1)[0]
+    # It points at the spoiler door rather than being one...
+    assert "HINTS.md" in target
+    # ...and still asks for the one honest admission that belongs on this side of it.
+    assert "lowered" in target
+    # The two things that hand over the answer: a complexity, or a name for the method.
+    assert "O(" not in target
+    assert "complexity" not in target.lower()
+    assert not re.search(r"sort|greedy|dynamic programming|two.pointer|binary search"
+                         r"|Dijkstra|topological|sliding window", target, re.I)
 
 
 # ------------------------------------------------------- the template must block
