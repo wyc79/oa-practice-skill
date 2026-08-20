@@ -69,8 +69,8 @@ be scored.
 On a clean pass `judge` also prints how your solution scales with input size.
 
 A run that scores 100% files your solution in a folder of its own,
-`solutions/<date>-<time>/solution.<ext>` — one attempt per folder, with anything else
-about it beside it. `wipe` then hands the problem back cold: it restores the stub, and
+`solutions/<date>-<time>/solution.<ext>`, with a `results.md` beside it recording what
+that run scored, how long each test took and how it scaled. `wipe` then hands the problem back cold: it restores the stub, and
 refuses if what you have now is not already archived.
 
 `--llm` is opt-in and only runs once you have scored 100%: it sends this README, your

@@ -30,7 +30,7 @@ separate request and fine to fulfill.
 ├── oa.py               # harness engine (run / judge / gen / answers / case / selfcheck)
 ├── tests/samples/      # sample1.in, sample1.out, sample2.in, ...
 ├── solutions/          # one folder per attempt that scored 100%, filed by judge
-│   └── <stamp>/        #   solution.<ext>, plus review.md when --llm ran
+│   └── <stamp>/        #   solution.<ext> + results.md, review.md when --llm ran
 └── .oa/
     ├── gen.py          # declared constraint bounds + edge cases + randoms + stress
     ├── checker.py      # only when multiple outputs are valid
@@ -369,8 +369,11 @@ else's outage would be worse than one that never had opinions.
 **The redo loop**: a 100% `judge` copies the entry file into its own folder,
 `solutions/<date>-<time>/solution.<ext>`, and skips it when an equivalent one is
 already archived — whitespace is ignored, so re-running a formatter does not file a
-second copy. Each folder holds one attempt and, once `--llm` has run on it, the
-`review.md` written about that attempt.
+second copy. Each folder holds one attempt and what is known about it: the code, a
+`results.md` written from the judge run that archived it — score, per-test times and
+peak memory, the scaling report — and a `review.md` once `--llm` has run on it. A
+deduped re-pass writes nothing, so `results.md` always describes the run that first
+filed that code rather than the last one to re-run it.
 `./oa.sh wipe` then restores the stub from `.oa/stub.<ext>` and the problem is cold
 again. It refuses while the current file is neither the stub nor already in
 `solutions/`, because an unarchived solve is the one thing in the folder that cannot

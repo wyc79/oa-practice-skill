@@ -362,8 +362,9 @@ Windows: `.\run.cmd`, `.\judge.cmd`, `.\oa.cmd <cmd>`. All three wrappers forwar
 `oa.py`, which you can also call directly if you already know your interpreter's name.
 
 A `judge` run that scores 100% copies the entry file to
-`solutions/<YYYYMMDD-HHMMSS>/solution.<ext>` — a folder per attempt, so anything else
-about it has somewhere to sit — unless an equivalent solution is already archived — the comparison strips every whitespace character first, so a reformat of a
+`solutions/<YYYYMMDD-HHMMSS>/solution.<ext>`, with that run's `results.md` beside it —
+a folder per attempt, holding the code and what is known about it — unless an
+equivalent solution is already archived — the comparison strips every whitespace character first, so a reformat of a
 solution already on file is recognised as the same one. `wipe` restores the entry file
 from `.oa/stub.<ext>`, the untouched copy scaffold left behind, and refuses while the
 current file is neither that stub nor something `solutions/` already holds. That is the

@@ -60,8 +60,8 @@ complexity, idiom, edge cases and likely follow-ups. It needs `OA_REVIEW_API_KEY
 
 A `judge` that scores 100% files your solution in a folder of its own,
 `<slug>/solutions/<date>-<time>/solution.<ext>`, skipping it if an equivalent one is
-already archived. Anything else about that attempt lands beside it — `review.md` when
-you run `--llm`. `./oa.sh wipe` then restores the stub and hands the problem back cold. It refuses
+already archived, and drops a `results.md` beside it — what you scored, how fast each
+test ran, and how the solution scaled. `review.md` joins them when you run `--llm`. `./oa.sh wipe` then restores the stub and hands the problem back cold. It refuses
 while what you have is neither the stub nor something already archived, so nothing you
 have not saved can be lost; `wipe --force` overrides that.
 

@@ -114,6 +114,10 @@ def out(p):
     return p.stdout + p.stderr
 
 
+def cfg_of(ws):
+    return json.loads((ws / "problem.json").read_text(encoding="utf-8-sig"))
+
+
 def cfg(ws, **kw):
     path = ws / "problem.json"
     c = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -876,8 +880,39 @@ def test_a_hundred_percent_judge_archives_the_entry_file(ws):
     stamp = solutions(ws)[0]
     assert re.fullmatch(r"\d{8}-\d{6}", stamp), stamp
     assert (ws / "solutions" / stamp / "solution.py").read_text() == MAIN
-    # One attempt per folder, and nothing else in it until something is said about it.
-    assert [p.name for p in (ws / "solutions" / stamp).iterdir()] == ["solution.py"]
+    # The code and that run's report. Nothing else until the LLM has been asked.
+    assert sorted(p.name for p in (ws / "solutions" / stamp).iterdir()) == [
+        "results.md", "solution.py"]
+
+
+def test_results_md_describes_the_run_that_archived_it(ws):
+    p = oa(ws, "judge", expect=0)
+    results = (ws / "solutions" / solutions(ws)[0] / "results.md").read_text()
+    # The score the user just saw, spelled the same way.
+    assert "**Score: 9/9 (100%)**" in results
+    assert f"{cfg_of(ws)['time_limit_ms']} ms limit" in results
+    # One row per scored test, and every name from the run accounted for.
+    rows = [ln for ln in results.splitlines() if ln.startswith("| `")]
+    assert len(rows) == 9
+    for name in re.findall(r"PASS (\S+)", out(p)):
+        assert f"| `{name}` |" in results, name
+    # The scaling report the terminal printed, verbatim, in a fenced block.
+    assert "## Scaling" in results
+    assert "Scaling — largest tests, by input size" in results
+    # ...and the caveat that makes the memory column readable.
+    assert "sampled" in results
+
+
+def test_a_deduped_re_pass_rewrites_nothing(ws):
+    oa(ws, "judge", expect=0)
+    folder = ws / "solutions" / solutions(ws)[0]
+    before = {f.name: f.read_bytes() for f in folder.iterdir()}
+    # Same code, reformatted. results.md must still describe the run that filed it,
+    # not a later re-run of identical code on a busier machine.
+    write(ws / "main.py", MAIN.replace("\n", "\n\n"))
+    oa(ws, "judge", expect=0)
+    assert len(solutions(ws)) == 1
+    assert {f.name: f.read_bytes() for f in folder.iterdir()} == before
 
 
 def test_a_failing_judge_archives_nothing(ws):
@@ -1028,7 +1063,7 @@ def test_llm_review_prints_the_reply_and_saves_it(ws, fake_llm):
     stamp = solutions(ws)[0]
     assert REPLY.strip() in (ws / "solutions" / stamp / "review.md").read_text()
     assert sorted(p.name for p in (ws / "solutions" / stamp).iterdir()) == [
-        "review.md", "solution.py"]
+        "results.md", "review.md", "solution.py"]
     assert len(seen) == 1
 
 

@@ -20,8 +20,8 @@ The `--entry` stand-in carries the entry file's extension, because it goes throu
 same build() and so to the same toolchain: `_check.cpp` for the default C++ workspace,
 `_check.py` for a Python one.
 
-A 100% `judge` files the entry file away as solutions/<stamp>/solution.<ext>, which is
-what makes `wipe` safe to run: it refuses to overwrite an attempt the archive has not already seen. It
+A 100% `judge` files the entry file away as solutions/<stamp>/solution.<ext>, with that
+run's results.md beside it, which is what makes `wipe` safe to run: it refuses to overwrite an attempt the archive has not already seen. It
 also flips this folder's row from `unsolved` to `solved <date>` in the bank's
 CATALOGUE.md, if there is one, once — later passes leave the first date standing.
 
@@ -827,11 +827,17 @@ def archived_twin(c, text):
     return None
 
 
-def archive_solution(c):
+def archive_solution(c, results=None):
     """File the entry file under solutions/<stamp>/. Returns (path, is_new).
 
     Called on a 100% judge and nowhere else, so a folder in here means exactly one
-    thing: what it holds passed the whole suite at the moment it was written."""
+    thing: what it holds passed the whole suite at the moment it was written. `results`
+    is that run's report, saved beside the code — a solution three months old with no
+    idea what it scored or how fast it was is half a record.
+
+    A re-pass that dedupes writes nothing at all. The report describes the run that
+    first archived this code, and overwriting it with a later run of the same code
+    would trade a measurement for an identical one taken on a busier machine."""
     entry = ROOT / c["entry"]
     twin = archived_twin(c, read(entry))
     if twin:
@@ -847,7 +853,43 @@ def archive_solution(c):
     folder.mkdir(parents=True)
     dest = folder / f"solution{entry_ext(c)}"
     shutil.copyfile(entry, dest)
+    if results:
+        write(folder / "results.md", results)
     return dest, True
+
+
+def results_markdown(c, passed, total, stats, scaling):
+    """The judge run, as markdown — it is read on GitHub as often as in a terminal.
+
+    stats is [(name, input_bytes, ms, mem)] for every scored test, which on a 100% run
+    is all of them: anything that timed out or crashed would have stopped this being
+    a 100% run."""
+    pct = 100.0 * passed / total if total else 0.0
+    slowest = max((ms for _, _, ms, _ in stats), default=0.0)
+    out = [f"# Results — {c.get('name', 'solution')}",
+           "",
+           f"**Score: {passed}/{total} ({pct:.0f}%)** — slowest {slowest:.0f} ms "
+           f"against a {c['time_limit_ms']} ms limit, on "
+           f"{time.strftime('%Y-%m-%d %H:%M')}.",
+           "",
+           "| Test | Input | Time | Peak memory |",
+           "|---|---|---|---|"]
+    for name, size, ms, mem in sorted(stats, key=lambda r: r[1]):
+        out.append(f"| `{name}` | {human_bytes(size)} | {ms:.0f} ms | "
+                   f"{human_bytes(mem)} |")
+    out += ["",
+            "Peak memory is read from the kernel on Windows and *sampled* on macOS and",
+            "Linux, so a test finishing in a few milliseconds can report a low figure or",
+            "`n/a`. Each time is a single run, on whatever else the machine was doing.",
+            "",
+            "## Scaling",
+            ""]
+    if scaling.strip():
+        out += ["```", scaling.strip("\n"), "```"]
+    else:
+        out.append("Not reported: fewer than three tests finished with a measurable "
+                   "size, which is not enough to fit anything to.")
+    return "\n".join(out) + "\n"
 
 
 def latest_solution(c):
@@ -1881,7 +1923,8 @@ def main():
         # the same scaling numbers the user is reading. Printed verbatim either way.
         summary = capture(complexity_report, c, stats)
         print(summary, end="")
-        kept, fresh = archive_solution(c)
+        kept, fresh = archive_solution(
+            c, results_markdown(c, p, t, stats, uncoloured(summary)))
         rel = kept.relative_to(ROOT)
         print(f"\n{G}archived {rel}{X}" if fresh else
               f"\n{DIM}already archived as {rel} — not filing a second copy{X}")
