@@ -1267,3 +1267,24 @@ def test_an_unwritable_catalogue_costs_one_line_not_the_score(ws):
         assert len(solutions(ws)) == 1      # the archive is unaffected
     finally:
         cat.chmod(0o644)
+
+
+def test_the_env_template_names_exactly_what_the_harness_reads():
+    """The bank's .env.example is a promise about variable names. It is written in a
+    reference file and read by nobody, so nothing but this test notices when the two
+    drift — and a template naming a variable oa.py ignores is a bug the user debugs."""
+    body = (REPO / "oa-practice" / "assets" / "harness" / "oa.py").read_text()
+    body = body.split("def review_config(", 1)[1].split("\ndef ", 1)[0]
+    reads = set(re.findall(r"OA_REVIEW_[A-Z_]+", body))
+
+    ref = (REPO / "oa-practice" / "references" / "problem-bank.md").read_text()
+    template = ref.split("\n## .env.example\n", 1)[1].split("```")[1]
+    offered = set(re.findall(r"OA_REVIEW_[A-Z_]+", template))
+
+    assert offered == reads == {"OA_REVIEW_API_KEY", "OA_REVIEW_MODEL",
+                                "OA_REVIEW_BASE_URL"}
+    # The key is ready to fill in; the two optional ones are commented out.
+    assert "\nOA_REVIEW_API_KEY=\n" in template
+    for name in ("OA_REVIEW_MODEL", "OA_REVIEW_BASE_URL"):
+        assert f"# {name}=" in template
+

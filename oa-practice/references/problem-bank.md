@@ -5,10 +5,10 @@ the first scaffold is about to land in a directory that is empty or a bare `git 
 It is one-time setup. Afterwards, adding a problem is `scaffold.py` plus one row in
 `CATALOGUE.md`, and none of these files is touched again.
 
-Four files at the repo root, and a fifth worth offering. The harness reads none of
-them — they are for the human and for git. **Create what is missing and append to what
-exists; replace nothing.** A repo that already has a `.gitignore` or a README has them
-for a reason.
+Five files at the repo root. The harness reads none of them — they are for the human
+and for git. **Create what is missing and append to what exists; replace nothing.** A
+repo that already has a `.gitignore`, a README or a `.env.example` has them for a
+reason.
 
 ```
 <bank>/
@@ -16,7 +16,7 @@ for a reason.
 ├── CATALOGUE.md      # one row per problem — the only file that grows
 ├── .gitattributes    # CRLF for .cmd, LF for everything the harness reads
 ├── .gitignore        # entry files and .env
-├── .env.example      # optional: the review keys, names only
+├── .env.example      # the review key names, so nobody has to guess the spelling
 └── <slug>/           # one scaffolded workspace per problem
 ```
 
@@ -149,7 +149,7 @@ Append these to whatever is already there.
 main.cpp
 main.py
 
-# The LLM review key. Never committed.
+# The LLM review key. Never committed — .env.example, which is only the names, is.
 .env
 
 __pycache__/
@@ -160,16 +160,25 @@ __pycache__/
 `.oa/`, which has to travel: it carries the generator, the references, and the stub
 that `wipe` restores from.
 
-## .env.example — optional, and worth offering
+## .env.example
 
-Names, no values, so nobody has to guess the spelling. Committing it is safe; it is
-also the reminder that its unsuffixed sibling is not.
+This one is committed — it holds names, not values, and it is the only place the
+spelling of them is written down. It doubles as the reminder that its unsuffixed
+sibling is never committed. If the repo already has one, leave it alone.
 
 ```
+# Copy this file to .env and fill in a key to enable `./judge.sh --llm`.
+# .env is gitignored: never commit the real one. This file holds names, not secrets.
 OA_REVIEW_API_KEY=
-OA_REVIEW_MODEL=
-OA_REVIEW_BASE_URL=
+
+# Both optional. The default is the Anthropic Messages API; setting a base URL
+# switches to OpenAI-compatible chat completions, which then needs a model name too.
+# OA_REVIEW_MODEL=
+# OA_REVIEW_BASE_URL=
 ```
+
+Those three names and no others: they are what `oa.py`'s `review_config()` looks up,
+and a template naming a variable the harness does not read is worse than no template.
 
 ## Before handing it over
 

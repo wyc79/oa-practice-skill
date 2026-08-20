@@ -352,7 +352,8 @@ Configure with `OA_REVIEW_API_KEY`, plus optional `OA_REVIEW_MODEL` and
 `OA_REVIEW_BASE_URL`, read from a `.env` in the problem folder, then one in the parent,
 then real environment variables. The default is the Anthropic Messages API; set a base
 URL and it speaks OpenAI-compatible chat completions instead. **A `.env` is never
-committed.** The whole layer is best-effort on purpose: no key, an unreadable `.env`, a
+committed**; a `.env.example` carrying the three names and no values is, and
+`references/problem-bank.md` has the one a bank should ship. The whole layer is best-effort on purpose: no key, an unreadable `.env`, a
 wrong endpoint or a dead network each cost one line and leave the score and the exit
 code exactly as the judge computed them. A harness that fails a submit over someone
 else's outage would be worse than one that never had opinions.
