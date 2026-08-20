@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -1114,3 +1115,155 @@ def test_a_custom_endpoint_without_a_model_says_so(ws):
            env={"OA_REVIEW_API_KEY": "k", "OA_REVIEW_BASE_URL": "http://127.0.0.1:1/v1"})
     assert "OA_REVIEW_MODEL" in out(p)
     assert "Score: 9/9 (100%)" in out(p)
+
+
+# ------------------------------------------------------- the bank catalogue
+# A 100% judge flips this folder's row in the bank's index. The properties worth
+# pinning are all about restraint: one cell, once, and everything else on that row —
+# columns the user owns, in whatever language — comes back byte-identical.
+
+CAT_HEAD = ("| # | Problem | Folder | Lang | Source | Added | Status | Category | Notes |\n"
+            "|---|---------|--------|------|--------|-------|--------|----------|-------|\n")
+ROW = "| 1 | 两数之和 / Sum | [p](p/) | py | 笔试 | 2026-08-19 | unsolved | 哈希表 | 复习: 9月 |\n"
+OTHER = "| 2 | Other | [p-ii](p-ii/) | py | OA | 2026-08-19 | unsolved |  |  |\n"
+
+
+def catalogue(ws, body=ROW + OTHER, head=CAT_HEAD, name="CATALOGUE.md", intro="# Catalogue\n\n"):
+    path = ws.parent / name
+    write(path, intro + head + body)
+    return path
+
+
+def today():
+    return time.strftime("%Y-%m-%d")
+
+
+def test_a_hundred_percent_judge_marks_the_row_solved(ws):
+    cat = catalogue(ws)
+    p = oa(ws, "judge", expect=0)
+    assert f"catalogue: marked solved {today()}" in out(p)
+    assert f"| unsolved |" not in cat.read_text().splitlines()[4]
+    assert f"solved {today()}" in cat.read_text().splitlines()[4]
+
+
+def test_only_the_status_cell_changes(ws):
+    cat = catalogue(ws)
+    before = cat.read_text()
+    oa(ws, "judge", expect=0)
+    after = cat.read_text()
+    # The whole file, byte for byte, with one cell substituted and nothing else —
+    # the Chinese title, the user's Category and Notes, the other problem's row.
+    assert after == before.replace("| unsolved | 哈希表 |", f"| solved {today()} | 哈希表 |", 1)
+    assert OTHER.strip() in after
+
+
+def test_the_date_records_the_first_solve(ws):
+    cat = catalogue(ws)
+    oa(ws, "judge", expect=0)
+    # Backdate it, then solve again the way the redo loop intends: wipe, re-solve.
+    write(cat, cat.read_text().replace(f"solved {today()}", "solved 2020-01-02"))
+    frozen = cat.read_text()
+    oa(ws, "wipe", expect=0)
+    write(ws / "main.py", MAIN)
+    p = oa(ws, "judge", expect=0)
+    assert cat.read_text() == frozen
+    assert "marked solved" not in out(p)
+
+
+def test_a_row_that_already_says_solved_is_untouched(ws):
+    cat = catalogue(ws, body=ROW.replace("unsolved", "solved 2019-05-05"))
+    before = cat.read_text()
+    p = oa(ws, "judge", expect=0)
+    assert cat.read_text() == before
+    assert "catalogue" not in out(p)
+
+
+def test_a_row_with_no_free_columns_still_flips(ws):
+    # Fewer cells than the header. The Status index still lands on the right one.
+    cat = catalogue(ws, body="| 1 | Sum | [p](p/) | py | OA | 2026-08-19 | unsolved |\n")
+    oa(ws, "judge", expect=0)
+    assert f"| solved {today()} |" in cat.read_text()
+
+
+def test_a_row_with_extra_columns_keeps_them(ws):
+    extra = "| 1 | Sum | [p](p/) | py | OA | 2026-08-19 | unsolved | cat | note | 星 | ★ |\n"
+    cat = catalogue(ws, body=extra)
+    oa(ws, "judge", expect=0)
+    assert cat.read_text().endswith(
+        extra.replace("| unsolved |", f"| solved {today()} |", 1))
+
+
+@pytest.mark.parametrize("cell", ["p", "[p](p/)", "[Sum](./p/)", "[Sum](p/README.md)",
+                                  "[Sum](p)"])
+def test_every_link_shape_finds_the_row(ws, cell):
+    cat = catalogue(ws, body=f"| 1 | Sum | {cell} | py | OA | 2026-08-19 | unsolved |\n")
+    oa(ws, "judge", expect=0)
+    assert f"solved {today()}" in cat.read_text()
+
+
+def test_a_longer_folder_name_is_not_our_row(ws):
+    # `p-ii` must not be marked solved because `p` was. There is no undo for that.
+    cat = catalogue(ws, body=OTHER)
+    before = cat.read_text()
+    p = oa(ws, "judge", expect=0)
+    assert cat.read_text() == before
+    assert "no row for p" in out(p)
+
+
+def test_a_workspace_with_no_bank_says_nothing(ws):
+    p = oa(ws, "judge", expect=0)
+    assert "catalogue" not in out(p)
+
+
+def test_a_parent_readme_table_is_the_fallback(ws):
+    cat = catalogue(ws, name="README.md", intro="# My problems\n\n")
+    oa(ws, "judge", expect=0)
+    assert f"solved {today()}" in cat.read_text()
+
+
+def test_a_parent_readme_that_is_not_an_index_says_nothing(ws):
+    readme = ws.parent / "README.md"
+    write(readme, "# notes\n\nJust a directory that happens to have a README.\n")
+    before = readme.read_text()
+    p = oa(ws, "judge", expect=0)
+    assert readme.read_text() == before
+    assert "catalogue" not in out(p)
+
+
+def test_catalogue_md_wins_over_the_readme(ws):
+    cat = catalogue(ws)
+    readme = catalogue(ws, name="README.md", intro="# My problems\n\n")
+    oa(ws, "judge", expect=0)
+    assert f"solved {today()}" in cat.read_text()
+    assert "unsolved" in readme.read_text().splitlines()[4]
+
+
+def test_a_table_inside_a_code_fence_is_not_a_catalogue(ws):
+    # A bank README that documents the table shape must not have its example edited.
+    readme = ws.parent / "README.md"
+    write(readme, "# bank\n\n```markdown\n" + CAT_HEAD + ROW + "```\n")
+    before = readme.read_text()
+    p = oa(ws, "judge", expect=0)
+    assert readme.read_text() == before
+    assert "catalogue" not in out(p)
+
+
+def test_a_failing_judge_leaves_the_catalogue_alone(ws):
+    cat = catalogue(ws)
+    before = cat.read_text()
+    write(ws / "main.py", WRONG)
+    p = oa(ws, "judge", expect=1)
+    assert cat.read_text() == before
+    assert "catalogue" not in out(p)
+
+
+def test_an_unwritable_catalogue_costs_one_line_not_the_score(ws):
+    cat = catalogue(ws)
+    cat.chmod(0o444)
+    try:
+        p = oa(ws, "judge", expect=0)
+        assert "Score: 9/9 (100%)" in out(p)
+        assert "catalogue: left alone" in out(p)
+        assert len(solutions(ws)) == 1      # the archive is unaffected
+    finally:
+        cat.chmod(0o644)
